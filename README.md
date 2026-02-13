@@ -1,15 +1,8 @@
-# omarchy-rog-z13-setup
+# Omarchy ROG Z13 Setup
 
 Post-install setup script for the ASUS ROG Flow Z13 (2025) running Omarchy Linux with the CachyOS kernel.
 
-This script automates the hardware-specific configuration described in the [ROG Flow Z13 Linux Guide](https://github.com/cliffback/ASUS-ROG-Flow-Z13-2025-Linux-Guide-Omarchy-CachyOS-Kernel). It walks through each step interactively, checks whether work has already been done, and skips anything that is already in place. It is safe to re-run at any point.
-
-## Prerequisites
-
-- A fresh install of Omarchy Linux (Arch-based)
-- Secure Boot disabled in BIOS (F2, then Advanced, then Security)
-- An internet connection
-- Running as a normal user (the script calls sudo internally)
+This script automates (and improves on) the hardware-specific configuration described in the [ROG Flow Z13 Linux Guide](https://github.com/cliffback/ASUS-ROG-Flow-Z13-2025-Linux-Guide-Omarchy-CachyOS-Kernel). It walks through each step interactively, checks whether work has already been done, and skips anything that is already in place. It is safe to re-run at any point.
 
 ## Usage
 
@@ -37,22 +30,28 @@ In dry-run mode all prompts are auto-answered yes and commands are printed inste
 
 The script runs six phases in order:
 
-**Phase 0 -- System update.**
+**Phase 0 - System update**
+
 Updates keyrings and system packages via pacman.
 
-**Phase 1 -- CachyOS kernel and ASUS drivers.**
+**Phase 1 - CachyOS kernel and ASUS drivers**
+
 Adds the CachyOS and G14 (asus-linux.org) repositories to pacman.conf, resolves Hyprland dependency conflicts between CachyOS and stable repos, installs the CachyOS kernel and headers, and installs asusctl and rog-control-center. Backs up pacman.conf before making changes.
 
-**Phase 2 -- asusd service fix.**
+**Phase 2 - asusd service fix**
+
 The upstream asusd.service unit ships without an [Install] section, which prevents it from being enabled. This phase creates a systemd drop-in to add the missing section, then enables and starts the service.
 
-**Phase 3 -- Hardware support.**
+**Phase 3 - Hardware support**
+
 Installs split firmware packages (linux-firmware-amdgpu, linux-firmware-mediatek), removes the legacy linux-firmware-git if present, installs yay if needed, then installs AUR packages for tablet support (iio-hyprland-git, wvkbd-deskintl) and rofi-wayland. Applies a Wi-Fi stability fix for the MT7925E adapter by disabling ASPM.
 
-**Phase 4 -- Hyprland configuration.**
+**Phase 4 - Hyprland configuration**
+
 Appends Z13-specific settings to ~/.config/hypr/hyprland.conf. This includes HiDPI scaling for the internal display (2x on eDP-1), auto-rotation via iio-hyprland, tablet input mapping, and keybinds for the virtual keyboard, ROG Quick menu, keyboard backlight cycling, and rog-control-center.
 
-**Phase 5 -- ROG Quick TDP menu.**
+**Phase 5 - ROG Quick TDP menu**
+
 Installs a rofi-based TDP power menu to ~/rog-quick.sh. The menu shows the current power draw and lets you pick from preset wattages (15W through 120W) or reset to the active asusctl profile defaults. TDP values are written to the asus-nb-wmi sysfs interface via pkexec.
 
 ## File structure
