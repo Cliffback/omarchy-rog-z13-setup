@@ -71,6 +71,10 @@ templates/
   rog-quick.sh            TDP menu script deployed in Phase 5
 ```
 
+## Disclaimer
+
+This script modifies system packages, kernel, pacman repositories, systemd services, and configuration files. It is provided as-is with no warranty. Use it at your own risk. Review the source and use `--dry-run` before running it on your system. The author is not responsible for any damage or data loss that may result from using this script.
+
 ## License
 
 MIT
