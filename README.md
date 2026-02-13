@@ -52,7 +52,7 @@ Appends Z13-specific settings to ~/.config/hypr/hyprland.conf. This includes HiD
 
 **Phase 5 - ROG Quick TDP menu**
 
-Installs a rofi-based TDP power menu to ~/rog-quick.sh. The menu shows the current power draw and lets you pick from preset wattages (15W through 120W) or reset to the active asusctl profile defaults. TDP values are written to the asus-nb-wmi sysfs interface via pkexec.
+Installs a rofi-based TDP power menu to ~/rog-quick.sh. The menu shows the current power draw and lets you pick from preset wattages (15W through 120W) or reset to the active asusctl profile defaults. TDP values are written to the asus-nb-wmi sysfs interface via pkexec. Note that custom TDP values are reset whenever the asusctl power profile changes.
 
 ## File structure
 
