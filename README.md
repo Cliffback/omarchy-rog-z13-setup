@@ -44,7 +44,7 @@ The asusd.service unit currently ships without an [Install] section, which preve
 
 **Phase 3 - Hardware support**
 
-Installs split firmware packages (linux-firmware-amdgpu, linux-firmware-mediatek), removes the legacy linux-firmware-git if present, installs yay if needed, then installs AUR packages for tablet support (iio-hyprland-git, wvkbd-deskintl) and rofi-wayland. Applies a Wi-Fi stability fix for the MT7925E adapter by disabling ASPM.
+Installs split firmware packages (linux-firmware-amdgpu, linux-firmware-mediatek), AUR packages for tablet support (iio-hyprland-git, wvkbd-deskintl) and rofi-wayland. Applies a Wi-Fi stability fix for the MT7925E adapter by disabling ASPM.
 
 **Phase 4 - Hyprland configuration**
 
