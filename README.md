@@ -54,6 +54,18 @@ Appends Z13-specific settings to ~/.config/hypr/hyprland.conf. This includes HiD
 
 Installs a rofi-based TDP power menu to ~/rog-quick.sh. The menu shows the current power draw and lets you pick from preset wattages (15W through 120W) or reset to the active asusctl profile defaults. TDP values are written to the asus-nb-wmi sysfs interface via pkexec. Note that custom TDP values are reset whenever the asusctl power profile changes.
 
+## Custom Hyprland keybindings
+
+Phase 4 adds the following keybindings to your Hyprland config:
+
+| Keybind | Action |
+|---|---|
+| `Super + V` | Toggle on-screen virtual keyboard (wvkbd) |
+| `Super + A` | Open ROG Quick TDP power menu |
+| `XF86Launch3` (dedicated side button) | Open ROG Quick TDP power menu |
+| `Fn + F11` (`XF86KbdLightOnOff`) | Cycle keyboard backlight modes |
+| `Super + Shift + R` | Open ROG Control Center |
+
 ## File structure
 
 ```
