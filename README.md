@@ -40,7 +40,7 @@ Adds the CachyOS and G14 (asus-linux.org) repositories to pacman.conf, resolves 
 
 **Phase 2 - asusd service fix**
 
-The upstream asusd.service unit ships without an [Install] section, which prevents it from being enabled. This phase creates a systemd drop-in to add the missing section, then enables and starts the service.
+The asusd.service unit currently ships without an [Install] section, which prevents it from being enabled. This phase creates a systemd drop-in to add the missing section, then enables and starts the service.
 
 **Phase 3 - Hardware support**
 
