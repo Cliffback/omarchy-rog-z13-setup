@@ -24,6 +24,10 @@ phase3_run() {
         success "Firmware packages already installed."
     fi
 
+    # Mark firmware packages as explicitly installed so omarchy-update
+    # orphan cleanup doesn't remove them
+    run_sudo pacman -D --asexplicit linux-firmware-amdgpu linux-firmware-mediatek
+
     # Remove legacy linux-firmware-git if present (conflicts with split packages)
     if is_pkg_installed linux-firmware-git; then
         warn "linux-firmware-git is installed (obsolete — split packages are now used)."
