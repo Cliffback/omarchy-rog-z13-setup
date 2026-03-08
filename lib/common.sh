@@ -82,6 +82,18 @@ file_contains() {
 # Command existence check
 has_command() { command -v "$1" &>/dev/null; }
 
+# Check if gamescope has cap_sys_nice capability
+has_gamescope_caps() {
+    local gs_bin
+    gs_bin=$(command -v gamescope 2>/dev/null) || return 1
+    getcap "$gs_bin" 2>/dev/null | grep -q 'cap_sys_nice'
+}
+
+# Check if gaming mode pacman hook is installed
+has_gaming_mode_hook() {
+    [[ -f /etc/pacman.d/hooks/gaming-mode.hook ]]
+}
+
 # ── Dry-run wrapper functions ────────────────────────────────────────────
 
 # Run a command (or log it in dry-run mode)
