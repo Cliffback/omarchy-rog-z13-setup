@@ -1,27 +1,49 @@
 #!/bin/bash
 # Phase 3: Hardware Support (Firmware, Tablet utils, Wi-Fi fix)
 
+# Critical firmware packages for ROG Z13 — must be explicitly installed
+# to survive omarchy's orphan package cleanup
+FIRMWARE_PKGS=(linux-firmware-amdgpu linux-firmware-mediatek linux-firmware-intel linux-firmware-whence)
+
 phase3_check() {
-    is_pkg_installed linux-firmware-amdgpu \
-        && is_pkg_installed linux-firmware-mediatek \
-        && is_pkg_installed iio-hyprland-git \
+    # Check firmware packages are installed AND explicitly marked
+    for pkg in "${FIRMWARE_PKGS[@]}"; do
+        is_pkg_installed "$pkg" && is_pkg_explicit "$pkg" || return 1
+    done
+    
+    is_pkg_installed iio-hyprland-git \
         && is_pkg_installed wvkbd-deskintl \
         && is_pkg_installed rofi-wayland \
         && [[ -f /etc/modprobe.d/mt7925e.conf ]]
 }
 
 phase3_run() {
-    # Ensure required split firmware packages are installed
-    local fw_pkgs=()
-    is_pkg_installed linux-firmware-amdgpu   || fw_pkgs+=(linux-firmware-amdgpu)
-    is_pkg_installed linux-firmware-mediatek  || fw_pkgs+=(linux-firmware-mediatek)
+    # Install any missing firmware packages
+    local missing_fw=()
+    for pkg in "${FIRMWARE_PKGS[@]}"; do
+        is_pkg_installed "$pkg" || missing_fw+=("$pkg")
+    done
 
-    if [[ ${#fw_pkgs[@]} -gt 0 ]]; then
-        info "Installing firmware packages: ${fw_pkgs[*]}..."
-        run_sudo pacman -S --noconfirm "${fw_pkgs[@]}"
+    if [[ ${#missing_fw[@]} -gt 0 ]]; then
+        info "Installing firmware packages: ${missing_fw[*]}..."
+        run_sudo pacman -S --noconfirm "${missing_fw[@]}"
         success "Firmware packages installed."
     else
         success "Firmware packages already installed."
+    fi
+
+    # Mark ALL firmware as explicitly installed (protects from orphan cleanup)
+    # This is critical: omarchy-update-orphan-pkgs removes packages installed
+    # as dependencies if nothing requires them, which breaks WiFi and GPU
+    local needs_explicit=()
+    for pkg in "${FIRMWARE_PKGS[@]}"; do
+        is_pkg_explicit "$pkg" || needs_explicit+=("$pkg")
+    done
+
+    if [[ ${#needs_explicit[@]} -gt 0 ]]; then
+        info "Marking firmware as explicitly installed: ${needs_explicit[*]}..."
+        run_sudo pacman -D --asexplicit "${needs_explicit[@]}"
+        success "Firmware packages protected from orphan cleanup."
     fi
 
     # Remove legacy linux-firmware-git if present (conflicts with split packages)

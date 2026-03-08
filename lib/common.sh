@@ -67,6 +67,7 @@ cleanup_sudo() {
 
 # Package checks
 is_pkg_installed() { pacman -Qi "$1" &>/dev/null; }
+is_pkg_explicit()  { pacman -Qi "$1" 2>/dev/null | grep -q "Install Reason.*Explicitly installed"; }
 
 # Service checks
 is_service_enabled() { systemctl is-enabled "$1" &>/dev/null; }
