@@ -28,7 +28,7 @@ In dry-run mode all prompts are auto-answered yes and commands are printed inste
 
 ## What it does
 
-The script runs six phases in order:
+The script runs nine phases in order:
 
 **Phase 0 - System update**
 
@@ -54,6 +54,20 @@ Appends Z13-specific settings to ~/.config/hypr/hyprland.conf. This includes HiD
 
 Installs a rofi-based TDP power menu to ~/rog-quick.sh. The menu shows the current power draw and lets you pick from preset wattages (15W through 120W) or reset to the active asusctl profile defaults. TDP values are written to the asus-nb-wmi sysfs interface via pkexec. Note that custom TDP values are reset whenever the asusctl power profile changes.
 
+**Phase 6 - Steam Gamescope (optional)**
+
+Installs the NO SIGNAL Gamescope setup for Steam Gaming Mode, including session files and optional Decky Loader plugins. Also installs Heroic Games Launcher for Epic/GOG/Amazon games.
+
+**Phase 7 - CachyOS Mirror Optimization (optional)**
+
+Installs cachyos-rate-mirrors and ranks mirrors for optimal download speeds.
+
+**Phase 8 - Ollama GPU Setup (optional)**
+
+Installs ollama-vulkan for GPU-accelerated large language model inference using the Vulkan backend (recommended for AMD RDNA 3.5). Configures Ollama as a systemd service with optimized settings: flash attention enabled, 256k context window, 24-hour model keep-alive, and up to 3 concurrent models. Optionally enables network access and installs nvtop for GPU monitoring.
+
+Note: For optimal performance with large models (30B+), set iGPU memory allocation to 96GB in BIOS.
+
 ## Custom Hyprland keybindings
 
 Phase 4 adds the following keybindings to your Hyprland config:
@@ -78,9 +92,13 @@ lib/
   phase3_hardware.sh      Firmware, tablet utilities, Wi-Fi fix
   phase4_hyprland.sh      Hyprland configuration
   phase5_rogquick.sh      ROG Quick TDP menu
+  phase6_gamescope.sh     Steam Gamescope setup
+  phase7_mirrors.sh       CachyOS mirror optimization
+  phase8_ollama.sh        Ollama GPU setup (Vulkan)
 templates/
   hyprland-z13.conf       Hyprland config block appended in Phase 4
   rog-quick.sh            TDP menu script deployed in Phase 5
+  gaming-mode-hotfix.sh   Gaming mode capability fixes for Phase 6
 ```
 
 ## Disclaimer

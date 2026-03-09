@@ -20,6 +20,7 @@ source "$SCRIPT_DIR/lib/phase4_hyprland.sh"
 source "$SCRIPT_DIR/lib/phase5_rogquick.sh"
 source "$SCRIPT_DIR/lib/phase6_gamescope.sh"
 source "$SCRIPT_DIR/lib/phase7_mirrors.sh"
+source "$SCRIPT_DIR/lib/phase8_ollama.sh"
 
 # Track state
 NEEDS_REBOOT=0
@@ -101,6 +102,7 @@ run_phase 6 "Steam Gamescope (optional)" phase6_check phase6_run || true
 phase6_verify || true
 
 run_phase 7 "CachyOS Mirror Optimization (optional)" phase7_check phase7_run || true
+run_phase 8 "Ollama GPU Setup (optional)" phase8_check phase8_run || true
 
 # ── Summary ──────────────────────────────────────────────────────────────
 
