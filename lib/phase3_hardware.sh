@@ -16,7 +16,7 @@ phase3_check() {
         && is_pkg_installed rofi-wayland \
         && [[ -f /etc/modprobe.d/mt7925e.conf ]] \
         && is_pkg_installed alsa-utils \
-        && [[ -f /var/lib/alsa/asound.state ]]
+        && [[ ! -f ~/.config/wireplumber/wireplumber.conf.d/alsa-soft-mixer.conf ]]
 }
 
 phase3_run() {
@@ -97,16 +97,35 @@ phase3_run() {
         success "Wi-Fi fix already in place."
     fi
 
+    # Audio fix: Remove Omarchy's soft-mixer config
+    # With soft-mixer enabled, PipeWire doesn't manage ALSA hardware switches,
+    # causing speaker/headphone switching to break on jack plug/unplug.
+    # See: https://github.com/basecamp/omarchy/issues/4821
+    if [[ -f ~/.config/wireplumber/wireplumber.conf.d/alsa-soft-mixer.conf ]]; then
+        info "Removing soft-mixer config (breaks headphone/speaker switching)..."
+        rm -f ~/.config/wireplumber/wireplumber.conf.d/alsa-soft-mixer.conf
+        info "Restarting WirePlumber..."
+        systemctl --user restart wireplumber pipewire pipewire-pulse 2>/dev/null || true
+        success "Audio fix applied."
+    fi
+
     # Speaker amp initialization (ALC294 + CS35L41)
-    # Omarchy's soft-mixer config requires hardware volume to be set manually
     if ! is_pkg_installed alsa-utils; then
         info "Installing alsa-utils for mixer control..."
         run_sudo pacman -S --noconfirm alsa-utils
     fi
 
-    info "Initializing speaker amplifier volume..."
-    run_cmd amixer -c 1 set "Master" 100% unmute
-    run_cmd amixer -c 1 set "Speaker" 100% unmute
-    run_sudo alsactl store 1
-    success "Speaker amp initialized."
+    # Initial unmute for first boot (PipeWire manages persistence via WirePlumber)
+    # Dynamically find the card with ALC294 codec (Z13's Realtek chip)
+    local card
+    card=$(aplay -l 2>/dev/null | grep -i "ALC294" | head -1 | sed 's/card \([0-9]*\).*/\1/')
+    if [[ -n $card ]]; then
+        info "Initializing speaker amplifier volume (card $card)..."
+        run_cmd amixer -c "$card" set Master 80% unmute
+        run_cmd amixer -c "$card" set Speaker unmute
+        run_cmd amixer -c "$card" set Headphone unmute
+        success "Speaker amp initialized."
+    else
+        warn "ALC294 codec not found — skipping mixer init"
+    fi
 }

@@ -44,7 +44,9 @@ The asusd.service unit currently ships without an [Install] section, which preve
 
 **Phase 3 - Hardware support**
 
-Installs split firmware packages (linux-firmware-amdgpu, linux-firmware-mediatek), AUR packages for tablet support (iio-hyprland-git, wvkbd-deskintl) and rofi-wayland. Applies a Wi-Fi stability fix for the MT7925E adapter by disabling ASPM.
+Installs split firmware packages (linux-firmware-amdgpu, linux-firmware-mediatek, linux-firmware-intel, linux-firmware-cirrus), AUR packages for tablet support (iio-hyprland-git, wvkbd-deskintl) and rofi-wayland. Applies a Wi-Fi stability fix for the MT7925E adapter by disabling ASPM.
+
+Also fixes an audio issue where speakers go silent after plugging/unplugging headphones. Omarchy applies a `soft-mixer` WirePlumber config to all ASUS ROG devices, but this prevents PipeWire from managing hardware mixer switches (Speaker/Headphone), breaking jack detection switching on the Z13's ALC294 codec. This phase removes that config so PipeWire can properly handle speaker/headphone switching. See [basecamp/omarchy#4821](https://github.com/basecamp/omarchy/issues/4821) for details.
 
 **Phase 4 - Hyprland configuration**
 
