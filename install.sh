@@ -21,6 +21,7 @@ source "$SCRIPT_DIR/lib/phase5_rogquick.sh"
 source "$SCRIPT_DIR/lib/phase6_gamescope.sh"
 source "$SCRIPT_DIR/lib/phase7_mirrors.sh"
 source "$SCRIPT_DIR/lib/phase8_ollama.sh"
+source "$SCRIPT_DIR/lib/phase9_audio_eq.sh"
 
 # Track state
 NEEDS_REBOOT=0
@@ -103,6 +104,7 @@ phase6_verify || true
 
 run_phase 7 "CachyOS Mirror Optimization (optional)" phase7_check phase7_run || true
 run_phase 8 "Ollama GPU Setup (optional)" phase8_check phase8_run || true
+run_phase 9 "Audio EQ (EasyEffects)" phase9_check phase9_run || true
 
 # ── Summary ──────────────────────────────────────────────────────────────
 
