@@ -3,7 +3,7 @@
 
 # Critical firmware packages for ROG Z13 — must be explicitly installed
 # to survive omarchy's orphan package cleanup
-FIRMWARE_PKGS=(linux-firmware-amdgpu linux-firmware-mediatek linux-firmware-intel linux-firmware-whence)
+FIRMWARE_PKGS=(linux-firmware-amdgpu linux-firmware-mediatek linux-firmware-intel linux-firmware-whence linux-firmware-cirrus)
 
 phase3_check() {
     # Check firmware packages are installed AND explicitly marked
@@ -14,7 +14,9 @@ phase3_check() {
     is_pkg_installed iio-hyprland-git \
         && is_pkg_installed wvkbd-deskintl \
         && is_pkg_installed rofi-wayland \
-        && [[ -f /etc/modprobe.d/mt7925e.conf ]]
+        && [[ -f /etc/modprobe.d/mt7925e.conf ]] \
+        && is_pkg_installed alsa-utils \
+        && [[ -f /var/lib/alsa/asound.state ]]
 }
 
 phase3_run() {
@@ -94,4 +96,17 @@ phase3_run() {
     else
         success "Wi-Fi fix already in place."
     fi
+
+    # Speaker amp initialization (ALC294 + CS35L41)
+    # Omarchy's soft-mixer config requires hardware volume to be set manually
+    if ! is_pkg_installed alsa-utils; then
+        info "Installing alsa-utils for mixer control..."
+        run_sudo pacman -S --noconfirm alsa-utils
+    fi
+
+    info "Initializing speaker amplifier volume..."
+    run_cmd amixer -c 1 set "Master" 100% unmute
+    run_cmd amixer -c 1 set "Speaker" 100% unmute
+    run_sudo alsactl store 1
+    success "Speaker amp initialized."
 }
