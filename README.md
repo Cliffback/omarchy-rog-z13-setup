@@ -94,7 +94,7 @@ lib/
   phase3_hardware.sh      Firmware, tablet utilities, Wi-Fi fix
   phase4_hyprland.sh      Hyprland configuration
   phase5_rogquick.sh      ROG Quick TDP menu
-  phase6_gamescope.sh     Steam Gamescope setup
+  phase6_gaming.sh        Gaming Tools
   phase7_mirrors.sh       CachyOS mirror optimization
   phase8_ollama.sh        Ollama GPU setup (Vulkan)
 templates/

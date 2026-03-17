@@ -1,13 +1,17 @@
 #!/bin/bash
-# Phase 6: Steam Gamescope Setup (optional)
+# Phase 6: Gaming Tools (optional)
 
 GAMESCOPE_URL="https://www.dropbox.com/scl/fo/kyvz9f3hbra5m8wxr1w9k/AI3-P-c1zvWptThe57QSnG4?rlkey=sh4didbdi3cdeglhc2mly0817&st=g6886xpq&dl=1"
 TMP_DIR="$SCRIPT_DIR/.tmp"
 
 phase6_check() {
-    # Only check core gamescope installation, not optional plugins
+    # Skip phase only if ALL optional tools are already installed
     is_pkg_installed gamescope \
-        && [[ -f /usr/share/wayland-sessions/gamescope-session-steam-nm.desktop ]]
+        && [[ -f /usr/share/wayland-sessions/gamescope-session-steam-nm.desktop ]] \
+        && [[ -d "$HOME/homebrew/services" ]] \
+        && [[ -d "$HOME/homebrew/plugins/SimpleDeckyTDP" ]] \
+        && is_pkg_installed heroic-games-launcher-bin \
+        && is_pkg_installed emudeck-bin
 }
 
 # Verify gaming mode health — runs even when phase is skipped
@@ -65,18 +69,16 @@ phase6_verify() {
 }
 
 phase6_run() {
-    info "Setting up Steam Gamescope..."
+    local gamescope_ran=0
 
     # --- Gamescope (NO SIGNAL script) ---
     if is_pkg_installed gamescope && [[ -f /usr/share/wayland-sessions/gamescope-session-steam-nm.desktop ]]; then
         success "Gamescope already installed."
+    elif [[ $DRY_RUN -eq 1 ]]; then
+        info "Would prompt to install Gamescope (Steam Gaming Mode)"
     else
-        if [[ $DRY_RUN -eq 1 ]]; then
-            info "[DRY-RUN] would create $TMP_DIR"
-            info "[DRY-RUN] would download Dropbox zip to $TMP_DIR/gamescope.zip"
-            info "[DRY-RUN] would unzip to $TMP_DIR/gamescope/"
-            info "[DRY-RUN] would run NO SIGNAL Gamescope setup script"
-        else
+        if ask_yn "Install Gamescope (Steam Gaming Mode)?"; then
+            gamescope_ran=1
             mkdir -p "$TMP_DIR"
 
             info "Downloading Gamescope setup archive..."
@@ -89,58 +91,72 @@ phase6_run() {
 
             info "Running NO SIGNAL Gamescope setup script..."
             bash "$TMP_DIR/gamescope/Super_shift_S_release.sh"
+            success "Gamescope installed."
         fi
     fi
 
-    # --- Verify and optionally fix gaming mode (always prompt after fresh install) ---
-    phase6_verify always_prompt || true
+    # --- Verify and optionally fix gaming mode (only if gamescope was just installed) ---
+    if [[ $gamescope_ran -eq 1 ]]; then
+        phase6_verify always_prompt || true
+    fi
 
     # --- Decky Loader ---
     if [[ -d "$HOME/homebrew/services" ]]; then
         success "Decky Loader already installed."
+    elif [[ $DRY_RUN -eq 1 ]]; then
+        info "Would prompt to install Decky Loader (plugin framework for Gaming Mode)"
     else
         if ask_yn "Install Decky Loader (plugin framework for Gaming Mode)?"; then
-            if [[ $DRY_RUN -eq 1 ]]; then
-                info "[DRY-RUN] would run: curl -L https://github.com/SteamDeckHomebrew/decky-installer/releases/latest/download/install_release.sh | sh"
-            else
-                info "Installing Decky Loader..."
-                curl -L https://github.com/SteamDeckHomebrew/decky-installer/releases/latest/download/install_release.sh | sh
-                success "Decky Loader installed."
-            fi
+            info "Installing Decky Loader..."
+            curl -L https://github.com/SteamDeckHomebrew/decky-installer/releases/latest/download/install_release.sh | sh
+            success "Decky Loader installed."
         fi
     fi
 
     # --- SimpleDeckyTDP ---
     if [[ -d "$HOME/homebrew/plugins/SimpleDeckyTDP" ]]; then
         success "SimpleDeckyTDP already installed."
+    elif [[ $DRY_RUN -eq 1 ]]; then
+        info "Would prompt to install SimpleDeckyTDP (TDP control plugin)"
     else
         if ask_yn "Install SimpleDeckyTDP plugin (TDP control)?"; then
-            if [[ $DRY_RUN -eq 1 ]]; then
-                info "[DRY-RUN] would install 7zip and run SimpleDeckyTDP install script"
-            else
-                run_sudo pacman -S --needed --noconfirm 7zip
-                info "Installing SimpleDeckyTDP..."
-                curl -L https://github.com/aarron-lee/SimpleDeckyTDP/raw/main/install.sh | sh
-                success "SimpleDeckyTDP installed."
-            fi
+            sudo pacman -S --needed --noconfirm 7zip
+            info "Installing SimpleDeckyTDP..."
+            curl -L https://github.com/aarron-lee/SimpleDeckyTDP/raw/main/install.sh | sh
+            success "SimpleDeckyTDP installed."
         fi
     fi
 
     # --- Heroic Games Launcher ---
     if is_pkg_installed heroic-games-launcher-bin; then
         success "Heroic Games Launcher already installed."
+    elif [[ $DRY_RUN -eq 1 ]]; then
+        info "Would prompt to install Heroic Games Launcher (Epic/GOG/Amazon)"
     else
         if ask_yn "Install Heroic Games Launcher (Epic/GOG/Amazon)?"; then
-            run_cmd yay -S --needed --noconfirm heroic-games-launcher-bin
+            yay -S --needed --noconfirm heroic-games-launcher-bin
             success "Heroic Games Launcher installed."
+        fi
+    fi
+
+    # --- EmuDeck ---
+    if is_pkg_installed emudeck-bin; then
+        success "EmuDeck already installed."
+    elif [[ $DRY_RUN -eq 1 ]]; then
+        info "Would prompt to install EmuDeck (emulator setup & ROM management)"
+    else
+        if ask_yn "Install EmuDeck (emulator setup & ROM management)?"; then
+            yay -S --needed --noconfirm emudeck-bin
+            success "EmuDeck installed."
         fi
     fi
 
     # --- Cleanup ---
     if [[ -d "$TMP_DIR" ]]; then
-        info "Cleaning up temporary files..."
         rm -rf "$TMP_DIR"
     fi
 
-    success "Steam Gamescope setup complete."
+    if [[ $DRY_RUN -eq 0 ]]; then
+        success "Steam Gamescope setup complete."
+    fi
 }

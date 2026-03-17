@@ -18,7 +18,7 @@ source "$SCRIPT_DIR/lib/phase2_asusd.sh"
 source "$SCRIPT_DIR/lib/phase3_hardware.sh"
 source "$SCRIPT_DIR/lib/phase4_hyprland.sh"
 source "$SCRIPT_DIR/lib/phase5_rogquick.sh"
-source "$SCRIPT_DIR/lib/phase6_gamescope.sh"
+source "$SCRIPT_DIR/lib/phase6_gaming.sh"
 source "$SCRIPT_DIR/lib/phase7_mirrors.sh"
 source "$SCRIPT_DIR/lib/phase8_ollama.sh"
 source "$SCRIPT_DIR/lib/phase9_audio_eq.sh"
@@ -97,7 +97,7 @@ run_phase 2 "asusd Service Fix"       phase2_check phase2_run || true
 run_phase 3 "Hardware Support"         phase3_check phase3_run || true
 run_phase 4 "Hyprland Configuration"   phase4_check phase4_run || true
 run_phase 5 "ROG Quick TDP Menu"       phase5_check phase5_run || true
-run_phase 6 "Steam Gamescope (optional)" phase6_check phase6_run || true
+run_phase 6 "Gaming Tools (optional)" phase6_check phase6_run || true
 
 # Verify gaming mode even if phase 6 was skipped (gamescope already installed)
 phase6_verify || true
