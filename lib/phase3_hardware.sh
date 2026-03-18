@@ -16,7 +16,8 @@ phase3_check() {
         && is_pkg_installed rofi-wayland \
         && [[ -f /etc/modprobe.d/mt7925e.conf ]] \
         && is_pkg_installed alsa-utils \
-        && [[ ! -f ~/.config/wireplumber/wireplumber.conf.d/alsa-soft-mixer.conf ]]
+        && [[ ! -f ~/.config/wireplumber/wireplumber.conf.d/alsa-soft-mixer.conf ]] \
+        && [[ -L "$HOME/.config/makima/Asus Keyboard.toml" ]]
 }
 
 phase3_run() {
@@ -127,5 +128,23 @@ phase3_run() {
         success "Speaker amp initialized."
     else
         warn "ALC294 codec not found — skipping mixer init"
+    fi
+
+    # Makima Copilot key remap for ASUS keyboard
+    # ASUS ROG devices with detachable keyboards use "Asus Keyboard" as the device
+    # name instead of "AT Translated Set 2 keyboard". Create a symlink so makima
+    # recognizes both device names.
+    # See: https://github.com/basecamp/omarchy/pull/4935 (can be removed if merged)
+    local makima_src="$HOME/.config/makima/AT Translated Set 2 keyboard.toml"
+    local makima_dst="$HOME/.config/makima/Asus Keyboard.toml"
+
+    if [[ -f "$makima_src" ]] && [[ ! -e "$makima_dst" ]]; then
+        info "Creating makima symlink for ASUS keyboard..."
+        run_cmd ln -sf "AT Translated Set 2 keyboard.toml" "$makima_dst"
+        success "Makima ASUS keyboard support configured."
+    elif [[ -L "$makima_dst" ]]; then
+        success "Makima ASUS keyboard symlink already exists."
+    elif [[ ! -f "$makima_src" ]]; then
+        warn "Makima base config not found — skipping ASUS keyboard symlink."
     fi
 }
