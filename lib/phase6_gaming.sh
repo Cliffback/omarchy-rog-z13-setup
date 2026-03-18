@@ -22,6 +22,9 @@ phase6_check() {
 # Args: $1 = "always_prompt" to always offer hotfix (used after fresh install)
 # Returns 0 if all checks pass, 1 if issues found
 phase6_verify() {
+    # Skip in dry-run — phase already shows component status
+    [[ $DRY_RUN -eq 1 ]] && return 0
+
     local always_prompt="${1:-}"
     
     # Only run if gamescope is installed
