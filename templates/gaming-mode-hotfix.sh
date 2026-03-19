@@ -47,8 +47,12 @@ echo ""
 #       Both commands fail silently (2>/dev/null || true), so the return
 #       path is broken without any error message. SDDM never properly
 #       restarts and you end up at whatever session SDDM guesses.
+#
+# ALSO: The unmask command MUST use --runtime flag to match how switch-to-gaming
+#       masks the targets. Without --runtime, unmask looks in /etc/systemd/system/
+#       but the runtime masks are in /run/systemd/system/, so hibernation stays broken.
 # --------------------------------------------------------------------------
-info "FIX 2: Patching switch-to-desktop to use 'restart' instead of 'stop+start'..."
+info "FIX 2: Patching switch-to-desktop (restart + --runtime unmask)..."
 SWITCH_DESKTOP="/usr/local/bin/switch-to-desktop"
 if [[ -f "$SWITCH_DESKTOP" ]]; then
   sudo cp "$SWITCH_DESKTOP" "${SWITCH_DESKTOP}.pre-hotfix"
@@ -60,7 +64,8 @@ if [[ ! -f /tmp/.gaming-session-active ]]; then
 fi
 rm -f /tmp/.gaming-session-active
 
-sudo -n systemctl unmask sleep.target suspend.target hibernate.target hybrid-sleep.target 2>/dev/null
+# FIX: Use --runtime to unmask from /run/systemd/system/ where switch-to-gaming masks them
+sudo -n systemctl unmask --runtime sleep.target suspend.target hibernate.target hybrid-sleep.target 2>/dev/null
 sudo -n /usr/local/bin/gaming-session-switch desktop 2>/dev/null || true
 
 # Re-enable Bluetooth
@@ -100,34 +105,60 @@ fi
 echo ""
 
 # --------------------------------------------------------------------------
-# FIX 3: Add stop/start to sudoers as backup alongside restart
+# FIX 3: Add stop/start sddm and --runtime unmask to sudoers
 # --------------------------------------------------------------------------
 # WHY: Belt and suspenders. Even though we now use "restart" in the scripts,
 #       adding stop/start to sudoers means if any other code path (like a
 #       future update to os-session-select or a manual debug session) tries
 #       stop/start, it won't silently fail.
+#
+# ALSO: The unmask --runtime command needs to be in sudoers for the hibernation
+#       fix to work. Without it, the unmask command fails silently.
 # --------------------------------------------------------------------------
-info "FIX 3: Adding stop/start sddm permissions to sudoers..."
+info "FIX 3: Adding stop/start sddm and --runtime unmask to sudoers..."
 SUDOERS_FILE="/etc/sudoers.d/gaming-session-switch"
 if [[ -f "$SUDOERS_FILE" ]]; then
+  NEEDS_UPDATE=0
+  
   if ! sudo grep -q "systemctl stop sddm" "$SUDOERS_FILE"; then
-    # Append the new rules
+    NEEDS_UPDATE=1
+  fi
+  
+  if ! sudo grep -q "unmask --runtime" "$SUDOERS_FILE"; then
+    NEEDS_UPDATE=1
+  fi
+  
+  if [[ $NEEDS_UPDATE -eq 1 ]]; then
     sudo cp "$SUDOERS_FILE" "${SUDOERS_FILE}.bak"
-    sudo bash -c "cat >> '$SUDOERS_FILE'" << 'SUDOERS_APPEND'
+    
+    # Add stop/start if missing
+    if ! sudo grep -q "systemctl stop sddm" "$SUDOERS_FILE"; then
+      sudo bash -c "cat >> '$SUDOERS_FILE'" << 'SUDOERS_SDDM'
 %video ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop sddm
 %video ALL=(ALL) NOPASSWD: /usr/bin/systemctl start sddm
-SUDOERS_APPEND
+SUDOERS_SDDM
+      info "  Added stop/start sddm to sudoers"
+    fi
+    
+    # Add --runtime unmask if missing
+    if ! sudo grep -q "unmask --runtime" "$SUDOERS_FILE"; then
+      sudo bash -c "cat >> '$SUDOERS_FILE'" << 'SUDOERS_UNMASK'
+%video ALL=(ALL) NOPASSWD: /usr/bin/systemctl unmask --runtime sleep.target suspend.target hibernate.target hybrid-sleep.target
+SUDOERS_UNMASK
+      info "  Added --runtime unmask to sudoers"
+    fi
+    
     sudo chmod 0440 "$SUDOERS_FILE"
+    
     # Validate
     if sudo visudo -c -f "$SUDOERS_FILE" 2>/dev/null; then
-      info "  Added stop/start sddm to sudoers"
       info "  Backup at: ${SUDOERS_FILE}.bak"
     else
       err "  Sudoers validation failed! Restoring backup..."
       sudo mv "${SUDOERS_FILE}.bak" "$SUDOERS_FILE"
     fi
   else
-    info "  Already present in sudoers"
+    info "  All rules already present in sudoers"
   fi
 else
   err "  Not found: $SUDOERS_FILE"
@@ -315,8 +346,8 @@ echo "  ALL FIXES APPLIED"
 echo "================================================================"
 echo ""
 echo "  1. Disabled plasma.desktop (no more KDE fallback)"
-echo "  2. Fixed switch-to-desktop (restart instead of stop+start)"
-echo "  3. Added stop/start sddm to sudoers (belt and suspenders)"
+echo "  2. Fixed switch-to-desktop (restart + --runtime unmask for hibernation)"
+echo "  3. Added stop/start sddm and --runtime unmask to sudoers"
 echo "  4. Dynamic Hyprland session detection (survives renames)"
 echo "  5. Restored gamescope cap_sys_nice if needed"
 echo "  6. Installed pacman hook (auto-fixes after future updates)"
