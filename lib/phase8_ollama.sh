@@ -3,6 +3,8 @@
 
 OLLAMA_OVERRIDE_DIR="/etc/systemd/system/ollama.service.d"
 OLLAMA_OVERRIDE="$OLLAMA_OVERRIDE_DIR/override.conf"
+OPENWEBUI_CONTAINER="open-webui"
+OPENWEBUI_PORT="8081"  # Port 8080 conflicts with Steam CEF (breaks Decky Loader)
 
 phase8_check() {
     is_pkg_installed ollama-vulkan \
@@ -69,6 +71,38 @@ Environment=\"OLLAMA_MAX_LOADED_MODELS=3\"
         fi
     fi
 
+    # --- Open WebUI (optional web interface for Ollama) ---
+    # NOTE: Uses port 8081 instead of default 8080 to avoid conflict with
+    # Steam's CEF remote debugging port (required for Decky Loader in Gaming Mode)
+    if ! has_command docker; then
+        warn "Docker not found. Skipping Open WebUI installation."
+    elif docker ps -a --format '{{.Names}}' | grep -q "^${OPENWEBUI_CONTAINER}$"; then
+        if docker ps --format '{{.Names}}' | grep -q "^${OPENWEBUI_CONTAINER}$"; then
+            success "Open WebUI already running on port $OPENWEBUI_PORT."
+        else
+            info "Open WebUI container exists but is not running."
+            if ask_yn "Start Open WebUI container?"; then
+                run_cmd docker start "$OPENWEBUI_CONTAINER"
+                success "Open WebUI started."
+            fi
+        fi
+    elif [[ $DRY_RUN -eq 1 ]]; then
+        info "Would prompt to install Open WebUI (web interface for Ollama)"
+    else
+        if ask_yn "Install Open WebUI (web interface for Ollama)?"; then
+            info "Pulling and starting Open WebUI on port $OPENWEBUI_PORT..."
+            docker run -d \
+                --name "$OPENWEBUI_CONTAINER" \
+                --network=host \
+                -e PORT="$OPENWEBUI_PORT" \
+                -e OLLAMA_BASE_URL=http://localhost:11434 \
+                -v open-webui:/app/backend/data \
+                --restart unless-stopped \
+                ghcr.io/open-webui/open-webui:main
+            success "Open WebUI installed and running."
+        fi
+    fi
+
     # Verification instructions
     echo ""
     info "To verify GPU acceleration is working:"
@@ -76,4 +110,8 @@ Environment=\"OLLAMA_MAX_LOADED_MODELS=3\"
     info "  2. In another terminal: ollama ps"
     info "  3. Check the PROCESSOR column shows 'GPU' not 'CPU'"
     info "  4. Optional: run 'nvtop' to monitor GPU usage"
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${OPENWEBUI_CONTAINER}$"; then
+        echo ""
+        info "Open WebUI is available at: http://localhost:$OPENWEBUI_PORT"
+    fi
 }
