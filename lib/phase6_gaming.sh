@@ -146,6 +146,30 @@ phase6_run() {
         fi
     fi
 
+    # --- Patch Heroic for Gamescope ---
+    if [[ -f /opt/Heroic/resources/app.asar ]]; then
+        if [[ $DRY_RUN -eq 1 ]]; then
+            info "Would prompt to patch Heroic for Gamescope (--ozone-platform=x11)"
+        elif heroic_needs_patch; then
+            echo ""
+            info "Heroic needs patching to work in Gamescope/Gaming Mode."
+            info "This adds --ozone-platform=x11 to Steam shortcuts so Electron can render in XWayland."
+            if ask_yn "Apply Heroic Gamescope patch?"; then
+                info "Patching Heroic for Gamescope compatibility..."
+                if bash "$SCRIPT_DIR/templates/patch-heroic-gamescope.sh"; then
+                    # Install the patch script system-wide for pacman hook
+                    sudo cp "$SCRIPT_DIR/templates/patch-heroic-gamescope.sh" /usr/local/bin/patch-heroic-gamescope
+                    sudo chmod +x /usr/local/bin/patch-heroic-gamescope
+                    success "Heroic patched and patch script installed to /usr/local/bin/"
+                else
+                    warn "Heroic patch returned non-zero (may already be patched)"
+                fi
+            fi
+        else
+            success "Heroic already patched for Gamescope."
+        fi
+    fi
+
     # --- EmuDeck ---
     local EMUDECK_APPIMAGE="$HOME/Applications/EmuDeck.AppImage"
     local EMUDECK_VERSION_FILE="$HOME/Applications/.emudeck-version"

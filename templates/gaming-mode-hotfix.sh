@@ -268,6 +268,7 @@ Target = gamescope
 Target = gamescope-session-git
 Target = gamescope-session-steam-git
 Target = sddm
+Target = heroic-games-launcher-bin
 
 [Action]
 Description = Restoring Gaming Mode configuration after update...
@@ -331,11 +332,55 @@ OSSEL
   log "Restored custom os-session-select"
 fi
 
+# Re-patch Heroic for Gamescope if it was updated
+HEROIC_PATCH="/usr/local/bin/patch-heroic-gamescope"
+HEROIC_ASAR="/opt/Heroic/resources/app.asar"
+if [[ -f "$HEROIC_PATCH" ]] && [[ -f "$HEROIC_ASAR" ]]; then
+  # Check if patch is needed (not already patched)
+  if ! npx --yes asar extract "$HEROIC_ASAR" /tmp/heroic-check-$$ &>/dev/null; then
+    log "Could not extract Heroic asar to check patch status"
+  elif ! grep -q 'ozone-platform=x11' /tmp/heroic-check-$$/build/main/main.js 2>/dev/null; then
+    rm -rf /tmp/heroic-check-$$
+    log "Re-patching Heroic for Gamescope..."
+    if "$HEROIC_PATCH"; then
+      log "Heroic re-patched successfully"
+    else
+      log "WARNING: Heroic patch returned non-zero (may need manual intervention)"
+    fi
+  else
+    rm -rf /tmp/heroic-check-$$
+    log "Heroic already patched for Gamescope"
+  fi
+fi
+
 log "Gaming Mode post-update complete"
 POST_UPDATE
 
 sudo chmod +x /usr/local/bin/gaming-mode-post-update
 info "  Created pacman hook and post-update script"
+echo ""
+
+# --------------------------------------------------------------------------
+# FIX 7: Suppress Vulkan swapchain error popups in gamescope
+# --------------------------------------------------------------------------
+# WHY: When launching Heroic/Electron games in gamescope, the WSI Vulkan layer
+#       shows zenity error dialogs about "queuePresentKHR attempting to present
+#       to a non-hooked swapchain". The games work fine after clicking OK, but
+#       these popups are annoying. GAMESCOPE_ZENITY_DISABLE=1 suppresses them.
+# --------------------------------------------------------------------------
+info "FIX 7: Suppressing gamescope Vulkan swapchain error popups..."
+GAMESCOPE_ENV="$HOME/.config/environment.d/gamescope-session-plus.conf"
+if [[ -f "$GAMESCOPE_ENV" ]]; then
+    if ! grep -q "GAMESCOPE_ZENITY_DISABLE" "$GAMESCOPE_ENV"; then
+        echo "GAMESCOPE_ZENITY_DISABLE=1" >> "$GAMESCOPE_ENV"
+        info "  Added GAMESCOPE_ZENITY_DISABLE=1 to gamescope session config"
+    else
+        info "  GAMESCOPE_ZENITY_DISABLE already configured"
+    fi
+else
+    warn "  Gamescope session config not found: $GAMESCOPE_ENV"
+    warn "  (This is normal if you haven't booted into Gaming Mode yet)"
+fi
 echo ""
 
 # --------------------------------------------------------------------------
@@ -351,6 +396,7 @@ echo "  3. Added stop/start sddm and --runtime unmask to sudoers"
 echo "  4. Dynamic Hyprland session detection (survives renames)"
 echo "  5. Restored gamescope cap_sys_nice if needed"
 echo "  6. Installed pacman hook (auto-fixes after future updates)"
+echo "  7. Suppressed gamescope Vulkan swapchain error popups"
 echo ""
 echo "  You can now safely reboot."
 echo ""
@@ -361,5 +407,6 @@ echo "    sudo cp /usr/local/bin/gaming-session-switch.pre-hotfix /usr/local/bin
 echo "    sudo cp /etc/sudoers.d/gaming-session-switch.bak /etc/sudoers.d/gaming-session-switch"
 echo "    sudo setcap -r \$(which gamescope)"
 echo "    sudo rm /etc/pacman.d/hooks/gaming-mode.hook /usr/local/bin/gaming-mode-post-update"
+echo "    # To undo FIX 7: edit ~/.config/environment.d/gamescope-session-plus.conf"
 echo "================================================================"
 echo ""

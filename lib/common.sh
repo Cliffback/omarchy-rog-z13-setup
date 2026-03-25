@@ -94,6 +94,35 @@ has_gaming_mode_hook() {
     [[ -f /etc/pacman.d/hooks/gaming-mode.hook ]]
 }
 
+# Check if Heroic needs gamescope patch (--ozone-platform=x11)
+# Returns 0 if patch is needed, 1 if already patched or Heroic not installed
+heroic_needs_patch() {
+    local asar_file="/opt/Heroic/resources/app.asar"
+    
+    # Not installed
+    [[ ! -f "$asar_file" ]] && return 1
+    
+    # Check if npm/asar available
+    command -v npm &>/dev/null || return 1
+    
+    # Quick check: extract just main.js and grep for the patch marker
+    local tmp_dir
+    tmp_dir=$(mktemp -d -t heroic-check.XXXXXX)
+    trap "rm -rf '$tmp_dir'" RETURN
+    
+    # Try to extract - if asar tool not installed, assume needs patch
+    if ! npx --yes asar extract "$asar_file" "$tmp_dir" &>/dev/null; then
+        return 0  # Can't check, assume needs patch
+    fi
+    
+    # Check if already patched
+    if grep -q 'ozone-platform=x11' "$tmp_dir/build/main/main.js" 2>/dev/null; then
+        return 1  # Already patched
+    fi
+    
+    return 0  # Needs patch
+}
+
 # ── Dry-run wrapper functions ────────────────────────────────────────────
 
 # Run a command (or log it in dry-run mode)
