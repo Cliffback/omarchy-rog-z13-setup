@@ -44,6 +44,16 @@ phase6_verify() {
         ((issues++))
     fi
 
+    if ! has_hdr_session_override; then
+        warn "HDR session override not installed (HDR may not work for non-Steam games)"
+        ((issues++))
+    fi
+
+    if ! has_refresh_rates_configured; then
+        warn "Refresh rates not configured (Steam may not show correct framerate options)"
+        ((issues++))
+    fi
+
     if [[ $issues -eq 0 ]]; then
         success "Gaming mode setup verified."
     else

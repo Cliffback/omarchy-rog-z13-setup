@@ -94,6 +94,21 @@ has_gaming_mode_hook() {
     [[ -f /etc/pacman.d/hooks/gaming-mode.hook ]]
 }
 
+# Check if HDR session override is installed for ROG Flow Z13
+# This override forces HDR10 PQ output to work around deficient panel EDID
+has_hdr_session_override() {
+    local session_file="$HOME/.config/gamescope-session-plus/sessions.d/steam"
+    [[ -f "$session_file" ]] && grep -q "GAMESCOPE_DEBUG_FORCE_HDR10_PQ_OUTPUT" "$session_file" 2>/dev/null
+}
+
+# Check if refresh rates are configured for ROG Flow Z13 180Hz panel
+has_refresh_rates_configured() {
+    local env_file="$HOME/.config/environment.d/gamescope-session-plus.conf"
+    [[ -f "$env_file" ]] \
+        && grep -q "^CUSTOM_REFRESH_RATES=" "$env_file" 2>/dev/null \
+        && grep -q "^STEAM_DISPLAY_REFRESH_LIMITS=" "$env_file" 2>/dev/null
+}
+
 # Check if Heroic needs gamescope patch (--ozone-platform=x11)
 # Returns 0 if patch is needed, 1 if already patched or Heroic not installed
 heroic_needs_patch() {

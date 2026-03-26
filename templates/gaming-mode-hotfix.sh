@@ -5,7 +5,7 @@
 # ============================================================================
 set -euo pipefail
 
-VERSION="1.1.0"
+VERSION="1.3.3"
 
 info(){ echo "[*] $*"; }
 warn(){ echo "[!] $*"; }
@@ -15,6 +15,12 @@ err(){ echo "[!] $*" >&2; }
 # CLI Argument Parsing
 # ---------------------------------------------------------------------------
 CHECK_ONLY=false
+
+# HDR fix is disabled by default because the ROG Flow Z13's internal panel
+# only has ~500 nits peak brightness, which makes HDR look worse than SDR.
+# Set to false to enable (useful for external HDR monitors with higher brightness).
+# Can also override at runtime: SKIP_HDR_FIX=false ./gaming-mode-hotfix.sh
+SKIP_HDR_FIX=${SKIP_HDR_FIX:-true}
 
 show_help() {
   cat << EOF
@@ -32,9 +38,11 @@ Options:
 Fixes applied:
   1. Restore cap_sys_nice on gamescope (for frame pacing)
   2. Disable competing session desktop files (plasma, gnome, kde)
-  3. Add stop/start sddm + --runtime unmask to sudoers
+  3. Configure refresh rates for ROG Flow Z13 180Hz panel
   4. Install pacman hook for surviving package updates
-  5. Suppress gamescope Vulkan swapchain error popups
+
+Optional (disabled by default):
+  HDR session override - Enable with: SKIP_HDR_FIX=false ./gaming-mode-hotfix.sh
 
 EOF
   exit 0
@@ -90,7 +98,7 @@ if ! $CHECK_ONLY; then
     if ! getcap "$GAMESCOPE_PATH" 2>/dev/null | grep -q 'cap_sys_nice'; then
       sudo setcap 'cap_sys_nice=eip' "$GAMESCOPE_PATH"
       info "  Restored cap_sys_nice on $GAMESCOPE_PATH"
-      ((FIXES_APPLIED++))
+      ((++FIXES_APPLIED))
     else
       info "  cap_sys_nice already set"
     fi
@@ -118,73 +126,49 @@ if ! $CHECK_ONLY; then
     if [[ -f "$path" ]]; then
       sudo mv "$path" "${path}.disabled"
       info "  Disabled: $unwanted"
-      ((FIXES_APPLIED++))
+      ((++FIXES_APPLIED))
     fi
   done
   echo ""
 fi
 
 # --------------------------------------------------------------------------
-# FIX 3: Add stop/start sddm + --runtime unmask to sudoers
+# FIX 3: Configure refresh rates for ROG Flow Z13 180Hz panel
 # --------------------------------------------------------------------------
-# WHY: Belt and suspenders. The main script uses "restart" in switch-to-desktop,
-#       but adding stop/start to sudoers means if any other code path (like a
-#       future update to os-session-select or a manual debug session) tries
-#       stop/start, it won't silently fail.
-#
-# ALSO: The unmask --runtime command needs to be in sudoers for the hibernation
-#       fix to work. Without it, the unmask command fails silently.
+# WHY: The ROG Flow Z13 has a 180Hz panel. Without these variables, Steam
+#       may not show the correct framerate options in the UI. 
+#       - CUSTOM_REFRESH_RATES: passed to gamescope as --custom-refresh-rates
+#       - STEAM_DISPLAY_REFRESH_LIMITS: tells Steam UI what range to show
 # --------------------------------------------------------------------------
+GAMESCOPE_ENV="$HOME/.config/environment.d/gamescope-session-plus.conf"
+
 if ! $CHECK_ONLY; then
-  info "FIX 3: Adding stop/start sddm and --runtime unmask to sudoers..."
-  SUDOERS_FILE="/etc/sudoers.d/gaming-session-switch"
-  if [[ -f "$SUDOERS_FILE" ]]; then
-    NEEDS_UPDATE=0
+  info "FIX 3: Configuring refresh rates for ROG Flow Z13 180Hz panel..."
+  if [[ -f "$GAMESCOPE_ENV" ]]; then
+    REFRESH_UPDATED=0
     
-    if ! sudo grep -q "systemctl stop sddm" "$SUDOERS_FILE"; then
-      NEEDS_UPDATE=1
-    fi
-    
-    if ! sudo grep -q "unmask --runtime" "$SUDOERS_FILE"; then
-      NEEDS_UPDATE=1
-    fi
-    
-    if [[ $NEEDS_UPDATE -eq 1 ]]; then
-      sudo cp "$SUDOERS_FILE" "${SUDOERS_FILE}.bak"
-      
-      # Add stop/start if missing
-      if ! sudo grep -q "systemctl stop sddm" "$SUDOERS_FILE"; then
-        sudo bash -c "cat >> '$SUDOERS_FILE'" << 'SUDOERS_SDDM'
-%video ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop sddm
-%video ALL=(ALL) NOPASSWD: /usr/bin/systemctl start sddm
-SUDOERS_SDDM
-        info "  Added stop/start sddm to sudoers"
-        ((FIXES_APPLIED++))
-      fi
-      
-      # Add --runtime unmask if missing
-      if ! sudo grep -q "unmask --runtime" "$SUDOERS_FILE"; then
-        sudo bash -c "cat >> '$SUDOERS_FILE'" << 'SUDOERS_UNMASK'
-%video ALL=(ALL) NOPASSWD: /usr/bin/systemctl unmask --runtime sleep.target suspend.target hibernate.target hybrid-sleep.target
-SUDOERS_UNMASK
-        info "  Added --runtime unmask to sudoers"
-        ((FIXES_APPLIED++))
-      fi
-      
-      sudo chmod 0440 "$SUDOERS_FILE"
-      
-      # Validate
-      if sudo visudo -c -f "$SUDOERS_FILE" 2>/dev/null; then
-        info "  Backup at: ${SUDOERS_FILE}.bak"
-      else
-        err "  Sudoers validation failed! Restoring backup..."
-        sudo mv "${SUDOERS_FILE}.bak" "$SUDOERS_FILE"
-      fi
+    if ! grep -q "^CUSTOM_REFRESH_RATES=" "$GAMESCOPE_ENV" 2>/dev/null; then
+      echo "CUSTOM_REFRESH_RATES=60,120,180" >> "$GAMESCOPE_ENV"
+      info "  Added CUSTOM_REFRESH_RATES=60,120,180"
+      REFRESH_UPDATED=1
     else
-      info "  All sudoers rules already present"
+      info "  CUSTOM_REFRESH_RATES already configured"
+    fi
+    
+    if ! grep -q "^STEAM_DISPLAY_REFRESH_LIMITS=" "$GAMESCOPE_ENV" 2>/dev/null; then
+      echo "STEAM_DISPLAY_REFRESH_LIMITS=60,180" >> "$GAMESCOPE_ENV"
+      info "  Added STEAM_DISPLAY_REFRESH_LIMITS=60,180"
+      REFRESH_UPDATED=1
+    else
+      info "  STEAM_DISPLAY_REFRESH_LIMITS already configured"
+    fi
+    
+    if [[ $REFRESH_UPDATED -eq 1 ]]; then
+      ((++FIXES_APPLIED))
     fi
   else
-    warn "  Not found: $SUDOERS_FILE (main script may not have run yet)"
+    warn "  Gamescope session config not found: $GAMESCOPE_ENV"
+    warn "  (This is normal if you haven't booted into Gaming Mode yet)"
   fi
   echo ""
 fi
@@ -201,11 +185,10 @@ fi
 if ! $CHECK_ONLY; then
   info "FIX 4: Installing pacman hook for update survival..."
   
-  if [[ -f /etc/pacman.d/hooks/gaming-mode.hook ]]; then
-    info "  Pacman hook already exists, updating..."
-  fi
-  
-  sudo mkdir -p /etc/pacman.d/hooks
+  if [[ -f /etc/pacman.d/hooks/gaming-mode.hook ]] && [[ -x /usr/local/bin/gaming-mode-post-update ]]; then
+    info "  Pacman hook already installed"
+  else
+    sudo mkdir -p /etc/pacman.d/hooks
   
   sudo tee /etc/pacman.d/hooks/gaming-mode.hook > /dev/null << 'PACMAN_HOOK'
 [Trigger]
@@ -307,35 +290,78 @@ fi
 log "Gaming Mode post-update complete"
 POST_UPDATE
   
-  sudo chmod +x /usr/local/bin/gaming-mode-post-update
-  info "  Created pacman hook and post-update script"
-  ((FIXES_APPLIED++))
+    sudo chmod +x /usr/local/bin/gaming-mode-post-update
+    info "  Created pacman hook and post-update script"
+    ((++FIXES_APPLIED))
+  fi
   echo ""
 fi
 
 # --------------------------------------------------------------------------
-# FIX 5: Suppress Vulkan swapchain error popups in gamescope
+# Disable HDR in Heroic (when SKIP_HDR_FIX=true)
 # --------------------------------------------------------------------------
-# WHY: When launching Heroic/Electron games in gamescope, the WSI Vulkan layer
-#       shows zenity error dialogs about "queuePresentKHR attempting to present
-#       to a non-hooked swapchain". The games work fine after clicking OK, but
-#       these popups are annoying. GAMESCOPE_ZENITY_DISABLE=1 suppresses them.
+# WHY: The ROG Flow Z13's panel only has ~500 nits peak brightness, which
+#       makes HDR look worse than SDR. Setting DXVK_HDR=0 in Heroic's config
+#       prevents games from trying to use HDR output.
 # --------------------------------------------------------------------------
-if ! $CHECK_ONLY; then
-  info "FIX 5: Suppressing gamescope Vulkan swapchain error popups..."
-  GAMESCOPE_ENV="$HOME/.config/environment.d/gamescope-session-plus.conf"
-  if [[ -f "$GAMESCOPE_ENV" ]]; then
-      if ! grep -q "GAMESCOPE_ZENITY_DISABLE" "$GAMESCOPE_ENV"; then
-          echo "GAMESCOPE_ZENITY_DISABLE=1" >> "$GAMESCOPE_ENV"
-          info "  Added GAMESCOPE_ZENITY_DISABLE=1 to gamescope session config"
-          ((FIXES_APPLIED++))
-      else
-          info "  GAMESCOPE_ZENITY_DISABLE already configured"
-      fi
-  else
-      warn "  Gamescope session config not found: $GAMESCOPE_ENV"
-      warn "  (This is normal if you haven't booted into Gaming Mode yet)"
+HEROIC_CONFIG="$HOME/.config/heroic/config.json"
+
+if ! $CHECK_ONLY && $SKIP_HDR_FIX; then
+  if [[ -f "$HEROIC_CONFIG" ]] && command -v jq &>/dev/null; then
+    if ! jq -e '.defaultSettings.enviromentOptions[]? | select(.key == "DXVK_HDR")' "$HEROIC_CONFIG" &>/dev/null; then
+      info "Setting DXVK_HDR=0 in Heroic config (disabling HDR for games)..."
+      # Add DXVK_HDR=0 to enviromentOptions array
+      jq '.defaultSettings.enviromentOptions += [{"key": "DXVK_HDR", "value": "0"}]' "$HEROIC_CONFIG" > "${HEROIC_CONFIG}.tmp" && \
+        mv "${HEROIC_CONFIG}.tmp" "$HEROIC_CONFIG"
+      info "  Added DXVK_HDR=0 to Heroic environment variables"
+      ((++FIXES_APPLIED))
+    fi
   fi
+fi
+
+# --------------------------------------------------------------------------
+# OPTIONAL: Install HDR session override for ROG Flow Z13
+# --------------------------------------------------------------------------
+# WHY: The ROG Flow Z13 2025's panel EDID is deficient - it has HDR Static
+#       Metadata but is missing PQ (ST2084) EOTF and BT.2020 RGB colorimetry.
+#       Gamescope requires both for automatic HDR detection. This override
+#       uses X11 atoms to force HDR10 PQ output, equivalent to the CLI flag
+#       --hdr-debug-force-output. The panel can physically handle HDR10
+#       (10-bit, 100% DCI-P3, 500 nits) despite the broken EDID.
+#
+# NOTE: Disabled by default because the panel's ~500 nits peak brightness
+#       makes HDR look worse than SDR. Enable with SKIP_HDR_FIX=false for
+#       external HDR monitors with better peak brightness.
+# --------------------------------------------------------------------------
+HDR_SESSION_DIR="$HOME/.config/gamescope-session-plus/sessions.d"
+HDR_SESSION_FILE="$HDR_SESSION_DIR/steam"
+HDR_TEMPLATE="$(dirname "${BASH_SOURCE[0]}")/gamescope-hdr-session-steam"
+
+if ! $CHECK_ONLY && ! $SKIP_HDR_FIX; then
+  echo "================================================================"
+  echo "  OPTIONAL: HDR SESSION OVERRIDE"
+  echo "================================================================"
+  echo ""
+  info "Installing HDR session override for ROG Flow Z13..."
+  
+  if [[ ! -f "$HDR_TEMPLATE" ]]; then
+    warn "  Template not found: $HDR_TEMPLATE"
+    warn "  (Run this script from the omarchy-rog-z13-setup directory)"
+  elif [[ -f "$HDR_SESSION_FILE" ]] && grep -q "GAMESCOPE_DEBUG_FORCE_HDR10_PQ_OUTPUT" "$HDR_SESSION_FILE" 2>/dev/null; then
+    info "  HDR session override already installed"
+  else
+    if [[ -f "$HDR_SESSION_FILE" ]]; then
+      warn "  Session override exists but doesn't have HDR fix - backing up and replacing"
+      cp "$HDR_SESSION_FILE" "${HDR_SESSION_FILE}.bak.$(date +%s)"
+    fi
+    mkdir -p "$HDR_SESSION_DIR"
+    cp "$HDR_TEMPLATE" "$HDR_SESSION_FILE"
+    info "  Created HDR session override at $HDR_SESSION_FILE"
+    ((++FIXES_APPLIED))
+  fi
+  echo ""
+  warn "REMINDER: Check Heroic Settings -> Other -> Environment Variables"
+  warn "          Remove DXVK_HDR=0 if you want HDR in Heroic games."
   echo ""
 fi
 
@@ -359,22 +385,6 @@ if command -v gamescope &>/dev/null; then
   fi
 fi
 
-# Check pacman hook
-if [[ -f /etc/pacman.d/hooks/gaming-mode.hook ]]; then
-  info "  [OK] Pacman hook installed"
-else
-  warn "  [WARN] Pacman hook not installed"
-  verify_ok=false
-fi
-
-# Check post-update script
-if [[ -x /usr/local/bin/gaming-mode-post-update ]]; then
-  info "  [OK] Post-update script installed"
-else
-  warn "  [WARN] Post-update script not installed"
-  verify_ok=false
-fi
-
 # Check competing sessions disabled
 competing_found=false
 for session in plasma.desktop gnome.desktop gnome-wayland.desktop kde-plasma.desktop; do
@@ -388,28 +398,41 @@ if ! $competing_found; then
   info "  [OK] No competing sessions enabled"
 fi
 
-# Check sudoers entries
-if [[ -f /etc/sudoers.d/gaming-session-switch ]]; then
-  if sudo grep -q "systemctl stop sddm" /etc/sudoers.d/gaming-session-switch 2>/dev/null; then
-    info "  [OK] Sudoers has stop/start sddm"
+# Check refresh rates
+if [[ -f "$GAMESCOPE_ENV" ]]; then
+  if grep -q "^CUSTOM_REFRESH_RATES=" "$GAMESCOPE_ENV" 2>/dev/null; then
+    info "  [OK] CUSTOM_REFRESH_RATES configured"
   else
-    warn "  [WARN] Sudoers missing stop/start sddm"
+    warn "  [WARN] CUSTOM_REFRESH_RATES not set"
     verify_ok=false
   fi
-  if sudo grep -q "unmask --runtime" /etc/sudoers.d/gaming-session-switch 2>/dev/null; then
-    info "  [OK] Sudoers has --runtime unmask"
+  if grep -q "^STEAM_DISPLAY_REFRESH_LIMITS=" "$GAMESCOPE_ENV" 2>/dev/null; then
+    info "  [OK] STEAM_DISPLAY_REFRESH_LIMITS configured"
   else
-    warn "  [WARN] Sudoers missing --runtime unmask"
+    warn "  [WARN] STEAM_DISPLAY_REFRESH_LIMITS not set"
     verify_ok=false
   fi
 fi
 
-# Check GAMESCOPE_ZENITY_DISABLE
-if [[ -f "$HOME/.config/environment.d/gamescope-session-plus.conf" ]]; then
-  if grep -q "GAMESCOPE_ZENITY_DISABLE=1" "$HOME/.config/environment.d/gamescope-session-plus.conf" 2>/dev/null; then
-    info "  [OK] GAMESCOPE_ZENITY_DISABLE configured"
+# Check pacman hook and post-update script
+if [[ -f /etc/pacman.d/hooks/gaming-mode.hook ]] && [[ -x /usr/local/bin/gaming-mode-post-update ]]; then
+  info "  [OK] Pacman hook installed"
+else
+  warn "  [WARN] Pacman hook not installed"
+  verify_ok=false
+fi
+
+# Check HDR session override (only if HDR fix is enabled)
+if ! $SKIP_HDR_FIX; then
+  if [[ -f "$HOME/.config/gamescope-session-plus/sessions.d/steam" ]]; then
+    if grep -q "GAMESCOPE_DEBUG_FORCE_HDR10_PQ_OUTPUT" "$HOME/.config/gamescope-session-plus/sessions.d/steam" 2>/dev/null; then
+      info "  [OK] HDR session override installed"
+    else
+      warn "  [WARN] HDR session override exists but missing HDR fix"
+      verify_ok=false
+    fi
   else
-    warn "  [WARN] GAMESCOPE_ZENITY_DISABLE not set"
+    warn "  [WARN] HDR session override not installed"
     verify_ok=false
   fi
 fi
@@ -441,9 +464,13 @@ if ! $CHECK_ONLY; then
 fi
 echo "    1. Restore cap_sys_nice on gamescope (for frame pacing)"
 echo "    2. Disable competing session desktop files (plasma, gnome, kde)"
-echo "    3. Add stop/start sddm + --runtime unmask to sudoers"
+echo "    3. Configure refresh rates for ROG Flow Z13 180Hz panel"
 echo "    4. Install pacman hook (auto-fixes after package updates)"
-echo "    5. Suppress gamescope Vulkan swapchain error popups"
+if ! $SKIP_HDR_FIX; then
+  echo ""
+  echo "  Optional:"
+  echo "    * HDR session override installed (force HDR10 output)"
+fi
 echo ""
 if ! $CHECK_ONLY; then
   echo "  You can now safely reboot or enter Gaming Mode."

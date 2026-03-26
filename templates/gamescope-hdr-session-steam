@@ -1,0 +1,25 @@
+# ROG Flow Z13 HDR Session Override
+# Forces HDR10 PQ output to work around deficient panel EDID
+# (Missing PQ EOTF and BT.2020 colorimetry flags)
+#
+# This file is sourced by gamescope-session-plus AFTER the system default:
+#   /usr/share/gamescope-session-plus/sessions.d/steam
+#
+# Only the post_gamescope_start function is overridden; all exports and
+# other functions from the system file remain intact.
+
+function post_gamescope_start {
+    # Preserve original steam-tweaks behavior
+    if command -v steam-tweaks > /dev/null; then
+        steam-tweaks
+    fi
+    
+    # Force HDR10 PQ output for ROG Flow Z13
+    # These X11 atoms are equivalent to --hdr-debug-force-output and --hdr-debug-force-support
+    if [[ -n "${DISPLAY:-}" ]]; then
+        xprop -root -f GAMESCOPE_DEBUG_FORCE_HDR10_PQ_OUTPUT 32c \
+            -set GAMESCOPE_DEBUG_FORCE_HDR10_PQ_OUTPUT 1 2>/dev/null || true
+        xprop -root -f GAMESCOPE_DEBUG_FORCE_HDR_SUPPORT 32c \
+            -set GAMESCOPE_DEBUG_FORCE_HDR_SUPPORT 1 2>/dev/null || true
+    fi
+}
