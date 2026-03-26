@@ -1,13 +1,8 @@
 #!/bin/bash
 # Phase 6: Gaming Tools (optional)
-
-GAMESCOPE_URL="https://www.dropbox.com/scl/fo/kyvz9f3hbra5m8wxr1w9k/AI3-P-c1zvWptThe57QSnG4?rlkey=sh4didbdi3cdeglhc2mly0817&st=g6886xpq&dl=1"
-TMP_DIR="$SCRIPT_DIR/.tmp"
+# Gaming Mode script is now bundled in templates/Super_shift_S_release.sh
 
 phase6_check() {
-    # In dry-run mode, always enter phase to show status of each tool
-    [[ $DRY_RUN -eq 1 ]] && return 1
-
     # Skip phase only if ALL optional tools are already installed and up-to-date
     is_pkg_installed gamescope \
         && [[ -f /usr/share/wayland-sessions/gamescope-session-steam-nm.desktop ]] \
@@ -22,15 +17,10 @@ phase6_check() {
 # Args: $1 = "always_prompt" to always offer hotfix (used after fresh install)
 # Returns 0 if all checks pass, 1 if issues found
 phase6_verify() {
-    # Skip in dry-run — phase already shows component status
-    [[ $DRY_RUN -eq 1 ]] && return 0
-
     local always_prompt="${1:-}"
     
     # Only run if gamescope is installed
     is_pkg_installed gamescope || return 0
-
-    info "Verifying gaming mode setup..."
 
     local issues=0
 
@@ -62,13 +52,11 @@ phase6_verify() {
 
     # Prompt for hotfix if issues found OR if always_prompt is set
     if [[ $issues -gt 0 ]] || [[ "$always_prompt" == "always_prompt" ]]; then
-        if ask_yn "Run gaming mode hotfix script? (Recommended)"; then
-            if [[ $DRY_RUN -eq 1 ]]; then
-                info "[DRY-RUN] would run: $SCRIPT_DIR/templates/gaming-mode-hotfix.sh"
-            else
-                bash "$SCRIPT_DIR/templates/gaming-mode-hotfix.sh"
-                success "Gaming mode hotfix applied."
-            fi
+        if [[ $DRY_RUN -eq 1 ]]; then
+            info "[DRY-RUN] Would prompt to run gaming-mode-hotfix.sh"
+        elif ask_yn "Run gaming mode hotfix script? (Recommended)"; then
+            bash "$SCRIPT_DIR/templates/gaming-mode-hotfix.sh"
+            success "Gaming mode hotfix applied."
         fi
     fi
 
@@ -86,18 +74,8 @@ phase6_run() {
     else
         if ask_yn "Install Gamescope (Steam Gaming Mode)?"; then
             gamescope_ran=1
-            mkdir -p "$TMP_DIR"
-
-            info "Downloading Gamescope setup archive..."
-            curl -L -o "$TMP_DIR/gamescope.zip" "$GAMESCOPE_URL"
-
-            info "Extracting archive..."
-            unzip -o "$TMP_DIR/gamescope.zip" -d "$TMP_DIR/gamescope"
-
-            chmod +x "$TMP_DIR/gamescope/Super_shift_S_release.sh"
-
-            info "Running NO SIGNAL Gamescope setup script..."
-            bash "$TMP_DIR/gamescope/Super_shift_S_release.sh"
+            info "Running Gaming Mode setup script..."
+            bash "$SCRIPT_DIR/templates/Super_shift_S_release.sh"
             success "Gamescope installed."
         fi
     fi
@@ -148,21 +126,23 @@ phase6_run() {
 
     # --- Patch Heroic for Gamescope ---
     if [[ -f /opt/Heroic/resources/app.asar ]]; then
-        if [[ $DRY_RUN -eq 1 ]]; then
-            info "Would prompt to patch Heroic for Gamescope (--ozone-platform=x11)"
-        elif heroic_needs_patch; then
-            echo ""
-            info "Heroic needs patching to work in Gamescope/Gaming Mode."
-            info "This adds --ozone-platform=x11 to Steam shortcuts so Electron can render in XWayland."
-            if ask_yn "Apply Heroic Gamescope patch?"; then
-                info "Patching Heroic for Gamescope compatibility..."
-                if bash "$SCRIPT_DIR/templates/patch-heroic-gamescope.sh"; then
-                    # Install the patch script system-wide for pacman hook
-                    sudo cp "$SCRIPT_DIR/templates/patch-heroic-gamescope.sh" /usr/local/bin/patch-heroic-gamescope
-                    sudo chmod +x /usr/local/bin/patch-heroic-gamescope
-                    success "Heroic patched and patch script installed to /usr/local/bin/"
-                else
-                    warn "Heroic patch returned non-zero (may already be patched)"
+        if heroic_needs_patch; then
+            if [[ $DRY_RUN -eq 1 ]]; then
+                info "Would prompt to patch Heroic for Gamescope (--ozone-platform=x11)"
+            else
+                echo ""
+                info "Heroic needs patching to work in Gamescope/Gaming Mode."
+                info "This adds --ozone-platform=x11 to Steam shortcuts so Electron can render in XWayland."
+                if ask_yn "Apply Heroic Gamescope patch?"; then
+                    info "Patching Heroic for Gamescope compatibility..."
+                    if bash "$SCRIPT_DIR/templates/patch-heroic-gamescope.sh"; then
+                        # Install the patch script system-wide for pacman hook
+                        sudo cp "$SCRIPT_DIR/templates/patch-heroic-gamescope.sh" /usr/local/bin/patch-heroic-gamescope
+                        sudo chmod +x /usr/local/bin/patch-heroic-gamescope
+                        success "Heroic patched and patch script installed to /usr/local/bin/"
+                    else
+                        warn "Heroic patch returned non-zero (may already be patched)"
+                    fi
                 fi
             fi
         else
@@ -215,12 +195,15 @@ phase6_run() {
         fi
     fi
 
-    # --- Cleanup ---
-    if [[ -d "$TMP_DIR" ]]; then
-        rm -rf "$TMP_DIR"
-    fi
-
     if [[ $DRY_RUN -eq 0 ]]; then
         success "Steam Gamescope setup complete."
+    fi
+
+    # --- Always verify gaming mode health at end of phase ---
+    # In dry-run: shows current health status
+    # After fresh install: already ran with always_prompt above
+    # Otherwise: runs verification, prompts for hotfix only if issues found
+    if [[ $gamescope_ran -eq 0 ]]; then
+        phase6_verify || true
     fi
 }

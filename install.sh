@@ -99,9 +99,6 @@ run_phase 4 "Hyprland Configuration"   phase4_check phase4_run || true
 run_phase 5 "ROG Quick TDP Menu"       phase5_check phase5_run || true
 run_phase 6 "Gaming Tools (optional)" phase6_check phase6_run || true
 
-# Verify gaming mode even if phase 6 was skipped (gamescope already installed)
-phase6_verify || true
-
 run_phase 7 "CachyOS Mirror Optimization (optional)" phase7_check phase7_run || true
 run_phase 8 "Ollama GPU Setup (optional)" phase8_check phase8_run || true
 run_phase 9 "Audio EQ (EasyEffects)" phase9_check phase9_run || true
