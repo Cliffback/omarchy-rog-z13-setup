@@ -1,0 +1,14 @@
+[Unit]
+Description=Controller gaming mode trigger (BTN_MODE + BTN_START)
+Documentation=https://github.com/cliffback/omarchy-rog-z13-setup
+ConditionEnvironment=XDG_CURRENT_DESKTOP=Hyprland
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/controller-gaming-trigger
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

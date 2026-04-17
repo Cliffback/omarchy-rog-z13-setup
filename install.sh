@@ -22,6 +22,8 @@ source "$SCRIPT_DIR/lib/phase6_gaming.sh"
 source "$SCRIPT_DIR/lib/phase7_mirrors.sh"
 source "$SCRIPT_DIR/lib/phase8_ollama.sh"
 source "$SCRIPT_DIR/lib/phase9_audio_eq.sh"
+source "$SCRIPT_DIR/lib/phase10_thunderbolt_dock.sh"
+source "$SCRIPT_DIR/lib/phase11_controller_gaming.sh"
 
 # Track state
 NEEDS_REBOOT=0
@@ -102,6 +104,8 @@ run_phase 6 "Gaming Tools (optional)" phase6_check phase6_run || true
 run_phase 7 "CachyOS Mirror Optimization (optional)" phase7_check phase7_run || true
 run_phase 8 "Ollama GPU Setup (optional)" phase8_check phase8_run || true
 run_phase 9 "Audio EQ (EasyEffects)" phase9_check phase9_run || true
+run_phase 10 "Thunderbolt Dock Fix (optional)" phase10_check phase10_run || true
+run_phase 11 "Controller Gaming Trigger (optional)" phase11_check phase11_run || true
 
 # ── Summary ──────────────────────────────────────────────────────────────
 

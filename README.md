@@ -28,7 +28,7 @@ In dry-run mode all prompts are auto-answered yes and commands are printed inste
 
 ## What it does
 
-The script runs nine phases in order:
+The script runs twelve phases in order:
 
 **Phase 0 - System update**
 
@@ -70,6 +70,25 @@ Installs ollama-vulkan for GPU-accelerated large language model inference using 
 
 Note: For optimal performance with large models (30B+), set iGPU memory allocation to 96GB in BIOS.
 
+**Phase 9 - Audio EQ (optional)**
+
+Installs EasyEffects with Z13-optimized speaker presets from [Naomarik/Z13-StrixHalo-Omarchy](https://github.com/Naomarik/Z13-StrixHalo-Omarchy). Configures automatic preset loading: "IRZ13 Flow" for the internal speakers and "Perfect EQ" as fallback for headphones and other output devices. EasyEffects is set to start automatically in service mode.
+
+**Phase 10 - Thunderbolt Dock Fix (optional)**
+
+Installs udev rules to prevent the Intel Alpine Ridge Thunderbolt controller from entering D3 sleep and to trigger a PCI bus rescan on dock replug. The Z13's UEFI firmware has a buggy ACPI `_PS3` method that times out when the controller enters D3, breaking the PCIe tunnel to the dock and preventing its USB hub (including Ethernet) from enumerating. Unplugging and replugging the dock also corrupts the PCI topology, so a second rule triggers a rescan to recover automatically. Only needed if you use a Thunderbolt dock. See [docs/thunderbolt-dock-d3-fix.md](docs/thunderbolt-dock-d3-fix.md) for the full investigation.
+
+**Phase 11 - Controller Gaming Mode Trigger (optional)**
+
+Installs a background service that monitors any connected gamepad for a **Guide/PS button + Start** combo press and automatically switches to Gamescope gaming mode (via `/usr/local/bin/switch-to-gaming`). Works with any standard gamepad (PlayStation, Xbox, Switch Pro, etc.) — the controller is detected automatically by its capabilities, not by vendor/product ID. The service only runs under Hyprland and is inactive inside Gamescope sessions, so it won't interfere with gameplay. Uses `python-evdev` and runs as a systemd user service.
+
+To remove:
+```bash
+systemctl --user disable --now controller-gaming-trigger.service
+rm ~/.config/systemd/user/controller-gaming-trigger.service
+sudo rm /usr/local/bin/controller-gaming-trigger
+```
+
 ## Custom Hyprland keybindings
 
 Phase 4 adds the following keybindings to your Hyprland config:
@@ -97,10 +116,16 @@ lib/
   phase6_gaming.sh        Gaming Tools
   phase7_mirrors.sh       CachyOS mirror optimization
   phase8_ollama.sh        Ollama GPU setup (Vulkan)
+  phase9_audio_eq.sh      Audio EQ (EasyEffects)
+  phase10_thunderbolt_dock.sh  Thunderbolt dock D3 sleep fix
+  phase11_controller_gaming.sh Controller gaming mode trigger
 templates/
   hyprland-z13.conf       Hyprland config block appended in Phase 4
   rog-quick.sh            TDP menu script deployed in Phase 5
   gaming-mode-hotfix.sh   Gaming mode capability fixes for Phase 6
+  99-thunderbolt-no-d3.rules  Thunderbolt dock udev rules for Phase 10
+  controller-gaming-trigger.py   Gamepad combo listener for Phase 11
+  controller-gaming-trigger.service  Systemd user service for Phase 11
 ```
 
 ## Disclaimer
