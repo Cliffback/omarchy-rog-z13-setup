@@ -1,7 +1,6 @@
 [Unit]
-Description=Controller gaming mode trigger (BTN_MODE + BTN_START)
+Description=Controller gaming mode trigger (Guide/PS + Start combo)
 Documentation=https://github.com/cliffback/omarchy-rog-z13-setup
-ConditionEnvironment=XDG_CURRENT_DESKTOP=Hyprland
 After=graphical-session.target
 
 [Service]

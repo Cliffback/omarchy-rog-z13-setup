@@ -3,7 +3,8 @@
 controller-gaming-trigger — Monitor any gamepad for BTN_MODE + BTN_START combo
 and launch gaming mode via /usr/local/bin/switch-to-gaming.
 
-Designed to run as a systemd user service under Hyprland only.
+Designed to run as a systemd user service. Only triggers when gaming mode
+is not already active (checks /tmp/.gaming-session-active sentinel file).
 """
 
 import subprocess
@@ -18,9 +19,15 @@ from evdev import ecodes
 SWITCH_CMD = "/usr/local/bin/switch-to-gaming"
 COOLDOWN_SECONDS = 5
 RESCAN_INTERVAL = 2  # seconds between scans when no device found
+GAMING_SENTINEL = "/tmp/.gaming-session-active"
 
 # BTN_MODE = 316, BTN_START = 311
 REQUIRED_BUTTONS = {ecodes.BTN_MODE, ecodes.BTN_START}
+
+
+def is_gaming_active():
+    """Check if gaming mode is already active via sentinel file."""
+    return os.path.exists(GAMING_SENTINEL)
 
 
 def find_gamepad():
@@ -76,11 +83,14 @@ def monitor(dev):
                 if combo_active:
                     now = time.monotonic()
                     if now - last_trigger >= COOLDOWN_SECONDS:
-                        print("Combo triggered — launching gaming mode", flush=True)
-                        try:
-                            subprocess.Popen(SWITCH_CMD)
-                        except Exception as e:
-                            print(f"Failed to launch: {e}", flush=True)
+                        if is_gaming_active():
+                            print("Gaming mode already active — ignoring combo", flush=True)
+                        else:
+                            print("Combo triggered — launching gaming mode", flush=True)
+                            try:
+                                subprocess.Popen(SWITCH_CMD)
+                            except Exception as e:
+                                print(f"Failed to launch: {e}", flush=True)
                         last_trigger = now
                     else:
                         print("Combo ignored — cooldown active", flush=True)
