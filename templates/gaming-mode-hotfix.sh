@@ -40,6 +40,7 @@ Fixes applied:
   2. Disable competing session desktop files (plasma, gnome, kde)
   3. Configure refresh rates for ROG Flow Z13 180Hz panel
   4. Install pacman hook for surviving package updates
+  5. Patch switch-to-gaming with gaming session sentinel file
 
 Optional (disabled by default):
   HDR session override - Enable with: SKIP_HDR_FIX=false ./gaming-mode-hotfix.sh
@@ -298,6 +299,37 @@ POST_UPDATE
 fi
 
 # --------------------------------------------------------------------------
+# FIX 5: Patch switch-to-gaming with gaming session sentinel
+# --------------------------------------------------------------------------
+# WHY: switch-to-desktop checks for /tmp/.gaming-session-active before doing
+#       anything, but switch-to-gaming never creates it. This means:
+#       1. switch-to-desktop may exit early thinking gaming mode isn't active
+#       2. The controller gaming trigger (Phase 11) can't detect that gaming
+#          mode is already active, causing it to re-trigger in Gamescope.
+#       Adding "touch /tmp/.gaming-session-active" to switch-to-gaming fixes
+#       both issues. This is done here (not in the upstream Super_shift_S
+#       script) so the fix survives upstream updates.
+# --------------------------------------------------------------------------
+SWITCH_GAMING="/usr/local/bin/switch-to-gaming"
+
+if ! $CHECK_ONLY; then
+  info "FIX 5: Patching switch-to-gaming with session sentinel..."
+  if [[ -f "$SWITCH_GAMING" ]]; then
+    if grep -q 'gaming-session-active' "$SWITCH_GAMING" 2>/dev/null; then
+      info "  Sentinel already present in switch-to-gaming"
+    else
+      # Insert "touch /tmp/.gaming-session-active" after the sleep mask line
+      sudo sed -i '/systemctl mask --runtime sleep.target/a touch /tmp/.gaming-session-active' "$SWITCH_GAMING"
+      info "  Added sentinel (touch /tmp/.gaming-session-active) to switch-to-gaming"
+      ((++FIXES_APPLIED))
+    fi
+  else
+    warn "  switch-to-gaming not found (Gaming Mode not installed yet?)"
+  fi
+  echo ""
+fi
+
+# --------------------------------------------------------------------------
 # Disable HDR in Heroic (when SKIP_HDR_FIX=true)
 # --------------------------------------------------------------------------
 # WHY: The ROG Flow Z13's panel only has ~500 nits peak brightness, which
@@ -422,6 +454,16 @@ else
   verify_ok=false
 fi
 
+# Check switch-to-gaming sentinel
+if [[ -f "$SWITCH_GAMING" ]]; then
+  if grep -q 'gaming-session-active' "$SWITCH_GAMING" 2>/dev/null; then
+    info "  [OK] switch-to-gaming has session sentinel"
+  else
+    warn "  [WARN] switch-to-gaming missing session sentinel"
+    verify_ok=false
+  fi
+fi
+
 # Check HDR session override (only if HDR fix is enabled)
 if ! $SKIP_HDR_FIX; then
   if [[ -f "$HOME/.config/gamescope-session-plus/sessions.d/steam" ]]; then
@@ -466,6 +508,7 @@ echo "    1. Restore cap_sys_nice on gamescope (for frame pacing)"
 echo "    2. Disable competing session desktop files (plasma, gnome, kde)"
 echo "    3. Configure refresh rates for ROG Flow Z13 180Hz panel"
 echo "    4. Install pacman hook (auto-fixes after package updates)"
+echo "    5. Patch switch-to-gaming with session sentinel"
 if ! $SKIP_HDR_FIX; then
   echo ""
   echo "  Optional:"
