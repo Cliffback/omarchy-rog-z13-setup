@@ -103,7 +103,7 @@ run_phase 6 "Gaming Tools (optional)" phase6_check phase6_run || true
 
 run_phase 7 "CachyOS Mirror Optimization (optional)" phase7_check phase7_run || true
 run_phase 8 "Ollama GPU Setup (optional)" phase8_check phase8_run || true
-run_phase 9 "Audio EQ (EasyEffects)" phase9_check phase9_run || true
+run_phase 9 "Audio Amplifier Gain (CS35L41)" phase9_check phase9_run || true
 run_phase 10 "Thunderbolt Dock Fix (optional)" phase10_check phase10_run || true
 run_phase 11 "Controller Gaming Trigger (optional)" phase11_check phase11_run || true
 

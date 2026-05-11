@@ -70,9 +70,28 @@ Installs ollama-vulkan for GPU-accelerated large language model inference using 
 
 Note: For optimal performance with large models (30B+), set iGPU memory allocation to 96GB in BIOS.
 
-**Phase 9 - Audio EQ (optional)**
+**Phase 9 - Audio Amplifier Gain (optional)**
 
-Installs EasyEffects with Z13-optimized speaker presets from [Naomarik/Z13-StrixHalo-Omarchy](https://github.com/Naomarik/Z13-StrixHalo-Omarchy). Configures automatic preset loading: "IRZ13 Flow" for the internal speakers and "Perfect EQ" as fallback for headphones and other output devices. EasyEffects is set to start automatically in service mode.
+Increases the CS35L41 speaker amplifier gain from 15.5dB (default) to 19.5dB by symlinking firmware bincfg files. This is a hardware-level fix that makes the speakers significantly louder, closer to Windows/Dolby volume levels. Note: very high volume (above ~80%) may cause minor bass distortion on low frequencies, which is normal for laptop speakers at full power. Requires a reboot to take effect. See [this investigation](https://dev.to/ankk98/rog-flow-z13-2025-linux-audio-quality-investigation-3ggk) for background.
+
+To revert to default gain (15.5dB):
+```bash
+cd /lib/firmware/cirrus
+sudo ln -sf cs35l41/bincfgs/cs35l41-dsp1-15_5dB.bincfg.zst cs35l41-dsp1-spk-prot-10431fb3-l0.bincfg.zst
+sudo ln -sf cs35l41/bincfgs/cs35l41-dsp1-15_5dB.bincfg.zst cs35l41-dsp1-spk-prot-10431fb3-r0.bincfg.zst
+# Then reboot
+```
+
+<details>
+<summary>Uninstalling EasyEffects (from previous versions of this script)</summary>
+
+If you previously ran this script when it installed EasyEffects, you can remove it:
+```bash
+sudo pacman -Rns easyeffects
+rm -rf ~/.config/easyeffects ~/.local/share/easyeffects
+rm -f ~/.config/autostart/easyeffects-service.desktop
+```
+</details>
 
 **Phase 10 - Thunderbolt Dock Fix (optional)**
 
@@ -116,7 +135,7 @@ lib/
   phase6_gaming.sh        Gaming Tools
   phase7_mirrors.sh       CachyOS mirror optimization
   phase8_ollama.sh        Ollama GPU setup (Vulkan)
-  phase9_audio_eq.sh      Audio EQ (EasyEffects)
+  phase9_audio_eq.sh      Audio Amplifier Gain (CS35L41 bincfg)
   phase10_thunderbolt_dock.sh  Thunderbolt dock D3 sleep fix
   phase11_controller_gaming.sh Controller gaming mode trigger
 templates/
