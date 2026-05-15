@@ -16,7 +16,8 @@ phase3_check() {
         && is_pkg_installed rofi-wayland \
         && [[ -f /etc/modprobe.d/mt7925e.conf ]] \
         && is_pkg_installed alsa-utils \
-        && [[ ! -f ~/.config/wireplumber/wireplumber.conf.d/alsa-soft-mixer.conf ]]
+        && [[ ! -f ~/.config/wireplumber/wireplumber.conf.d/alsa-soft-mixer.conf ]] \
+        && [[ -f ~/.config/wireplumber/wireplumber.conf.d/hdmi-audio-autoactivate.conf ]]
 }
 
 phase3_run() {
@@ -127,6 +128,52 @@ phase3_run() {
         success "Speaker amp initialized."
     else
         warn "ALC294 codec not found — skipping mixer init"
+    fi
+
+    # HDMI audio: Enable auto-profile for AMD HDMI controller
+    # Without this, WirePlumber leaves the HDMI audio card profile set to "off"
+    # and HDMI monitors never appear as audio output devices.
+    local wp_conf_dir="$HOME/.config/wireplumber/wireplumber.conf.d"
+    local hdmi_conf="$wp_conf_dir/hdmi-audio-autoactivate.conf"
+    if [[ ! -f "$hdmi_conf" ]]; then
+        info "Enabling HDMI audio auto-profile..."
+        mkdir -p "$wp_conf_dir"
+        cat > "$hdmi_conf" << 'EOF'
+## Auto-activate HDMI audio output profiles.
+## WirePlumber defaults api.acp.auto-profile to false, which leaves
+## HDMI audio cards on the "off" profile — monitors never appear as
+## audio outputs. This rule enables automatic profile selection for
+## AMD/ATI HDMI audio controllers.
+
+monitor.alsa.rules = [
+  {
+    matches = [
+      {
+        device.vendor.id = "0x1002"
+      }
+    ]
+    actions = {
+      update-props = {
+        api.acp.auto-profile = true
+        api.acp.auto-port = true
+      }
+    }
+  }
+]
+EOF
+        # Clear any stale "off" profile stored in WirePlumber state.
+        # Without this, the state-profile hook restores "off" on every
+        # restart, overriding the auto-profile config above.
+        local wp_state="$HOME/.local/state/wireplumber/default-profile"
+        if [[ -f "$wp_state" ]] && grep -q "alsa_card.pci-0000_c4_00.1=off" "$wp_state"; then
+            info "Clearing stale HDMI 'off' profile from WirePlumber state..."
+            sed -i '/alsa_card.pci-0000_c4_00.1=off/d' "$wp_state"
+        fi
+
+        systemctl --user restart wireplumber pipewire pipewire-pulse 2>/dev/null || true
+        success "HDMI audio auto-profile enabled."
+    else
+        success "HDMI audio auto-profile already configured."
     fi
 
 }
