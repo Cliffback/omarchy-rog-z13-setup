@@ -4,7 +4,7 @@
 HYPRLAND_CONF="$HOME/.config/hypr/hyprland.conf"
 
 phase4_check() {
-    file_contains "$HYPRLAND_CONF" "XF86Launch3"
+    file_contains "$HYPRLAND_CONF" "wvkbd-deskintl"
 }
 
 phase4_run() {
@@ -21,6 +21,18 @@ phase4_run() {
         cat "$SCRIPT_DIR/templates/hyprland-z13.conf" >> "$HYPRLAND_CONF"
     fi
     success "Hyprland config updated."
+
+    # Deploy profile change notification script
+    local notify_script="$HOME/.local/bin/rog-profile-notify.sh"
+    info "Installing profile notification script..."
+    if [[ $DRY_RUN -eq 1 ]]; then
+        info "[DRY-RUN] would install rog-profile-notify.sh to $notify_script"
+    else
+        mkdir -p "$HOME/.local/bin"
+        cp "$SCRIPT_DIR/templates/rog-profile-notify.sh" "$notify_script"
+        chmod +x "$notify_script"
+    fi
+    success "Profile notification script installed."
 
     # Set named eDP-1 monitor for Z13 (required for iio-hyprland auto-rotation
     # and omarchy scaling cycle to work correctly with hyprctl keywords)
