@@ -24,6 +24,7 @@ source "$SCRIPT_DIR/lib/phase8_ollama.sh"
 source "$SCRIPT_DIR/lib/phase9_audio_eq.sh"
 source "$SCRIPT_DIR/lib/phase10_thunderbolt_dock.sh"
 source "$SCRIPT_DIR/lib/phase11_controller_gaming.sh"
+source "$SCRIPT_DIR/lib/phase12_audio_routing.sh"
 
 # Track state
 NEEDS_REBOOT=0
@@ -106,6 +107,7 @@ run_phase 8 "Ollama GPU Setup (optional)" phase8_check phase8_run || true
 run_phase 9 "Audio Amplifier Gain (CS35L41)" phase9_check phase9_run || true
 run_phase 10 "Thunderbolt Dock Fix (optional)" phase10_check phase10_run || true
 run_phase 11 "Controller Gaming Trigger (optional)" phase11_check phase11_run || true
+run_phase 12 "Audio Sink Routing" phase12_check phase12_run || true
 
 # ── Summary ──────────────────────────────────────────────────────────────
 
