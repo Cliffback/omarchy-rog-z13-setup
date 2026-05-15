@@ -13,7 +13,8 @@
 
 | Shortcut | Action |
 |----------|--------|
-| `Super+A` | ROG TDP power menu (`~/rog-quick.sh`) |
+| `Super+Q` | Power profile picker (`omarchy-menu power`) |
+| `Super+Shift+Q` | ROG TDP cap menu (`~/.local/bin/rog-quick.sh`) |
 | `Super+Shift+S` | Screenshot |
 | `Super+Shift+R` | ROG Control Center |
 | `Super+V` | Virtual keyboard (tablet mode) |
@@ -33,11 +34,29 @@ asusctl profile get
 
 ### Available profiles
 
-| Profile | Description |
-|---------|-------------|
-| `quiet` | Low fan speed, power saving |
-| `balanced` | Default, moderate fans |
-| `performance` | Max fans, full TDP |
+All profiles share the same firmware TDP ceiling (120W SPL). The difference is
+fan curves and CPU boost behavior (EPP). The Z13's cooling sustains ~70-75W max.
+
+| Profile | Fan Behavior | CPU Boost (EPP) | Practical Wattage |
+|---------|-------------|-----------------|-------------------|
+| `quiet` | Low/silent | Conservative (Power) | ~15-30W |
+| `balanced` | Moderate | Moderate (BalancePower) | ~30-50W |
+| `performance` | Aggressive | Full boost (Performance) | ~70-75W (thermal limit) |
+
+### TDP Power Menu (Super+A)
+
+The TDP menu (`~/.local/bin/rog-quick.sh`) caps the APU power limit below the
+firmware default. This is the only way to set a specific wattage — profiles only
+control fan/boost behavior. Manual TDP caps are reset when switching profiles
+via Fn+F5.
+
+| TDP Cap | Use Case |
+|---------|----------|
+| Default | Reset to profile defaults (uncapped) |
+| 15W | Silent, max battery life |
+| 30W | Light browsing, document editing |
+| 45W | Moderate multitasking |
+| 70W | Max sustained (thermal ceiling) |
 
 ## Known Issues
 
