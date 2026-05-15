@@ -1,18 +1,19 @@
 #!/bin/bash
-# Phase 14: Lychee Slicer DPI Scaling (optional)
+# Phase 14: Lychee Slicer (optional)
+# Installs Lychee Slicer from AUR and applies a DPI scaling fix.
 # Lychee Slicer (Electron 12) renders UI ~1.25x oversized on Wayland.
-# This installs a launcher wrapper that reads the current monitor scale
-# and applies a 0.8 correction factor (scale * 0.8) so the UI matches
-# other apps across all displays and scaling levels.
-# See: docs/lychee-dpi-scaling.md
+# A launcher wrapper reads the current monitor scale and applies a 0.8
+# correction factor (scale * 0.8) so the UI matches other apps across
+# all displays and scaling levels.
 
+LYCHEE_PKG="lycheeslicer"
 LYCHEE_BIN="/opt/LycheeSlicer/lycheeslicer"
 LYCHEE_LAUNCHER="$HOME/.local/bin/lychee-scaled"
 LYCHEE_DESKTOP="$HOME/.local/share/applications/lycheeslicer.desktop"
 
 phase14_check() {
-    [[ -f "$LYCHEE_BIN" ]] || return 0  # Lychee not installed, nothing to do
-    [[ -f "$LYCHEE_LAUNCHER" ]] \
+    is_pkg_installed "$LYCHEE_PKG" \
+        && [[ -f "$LYCHEE_LAUNCHER" ]] \
         && grep -q 'force-device-scale-factor' "$LYCHEE_LAUNCHER" 2>/dev/null \
         && grep -q '0.8' "$LYCHEE_LAUNCHER" 2>/dev/null \
         && [[ -f "$LYCHEE_DESKTOP" ]] \
@@ -20,12 +21,33 @@ phase14_check() {
 }
 
 phase14_run() {
+    # Install from AUR if not present
+    if ! is_pkg_installed "$LYCHEE_PKG"; then
+        local aur_helper=""
+        if has_command yay; then
+            aur_helper="yay"
+        elif has_command paru; then
+            aur_helper="paru"
+        fi
+
+        if [[ -z "$aur_helper" ]]; then
+            warn "No AUR helper (yay/paru) found. Install $LYCHEE_PKG manually, then re-run."
+            return 0
+        fi
+
+        info "Installing Lychee Slicer from AUR..."
+        run_cmd $aur_helper -S --needed "$LYCHEE_PKG" || {
+            warn "Failed to install $LYCHEE_PKG"
+            return 0
+        }
+    fi
+
     if [[ ! -f "$LYCHEE_BIN" ]]; then
-        warn "Lychee Slicer not found at $LYCHEE_BIN — skipping."
+        warn "Lychee Slicer binary not found at $LYCHEE_BIN after install — skipping DPI fix."
         return 0
     fi
 
-    info "Installing DPI-corrected launcher for Lychee Slicer..."
+    info "Applying DPI scaling fix for Lychee Slicer..."
     info "Formula: device_scale_factor = monitor_scale * 0.8"
 
     mkdir -p "$(dirname "$LYCHEE_LAUNCHER")" "$(dirname "$LYCHEE_DESKTOP")"
@@ -68,5 +90,5 @@ EOF
 
     # Refresh desktop database so app launchers pick up the override
     run_cmd update-desktop-database "$HOME/.local/share/applications" 2>/dev/null
-    success "Lychee Slicer DPI scaling configured."
+    success "Lychee Slicer installed and DPI scaling configured."
 }
