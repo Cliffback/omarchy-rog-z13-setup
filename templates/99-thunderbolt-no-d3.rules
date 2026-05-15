@@ -1,0 +1,12 @@
+# Prevent Intel Alpine Ridge Thunderbolt controller from entering D3 sleep.
+# The ASUS ROG Z13 (2025) has a buggy ACPI _PS3 method on NHI0 that times out,
+# breaking the PCIe tunnel to the dock and preventing USB devices (including
+# Ethernet) from enumerating. Setting power/control to "on" keeps the controller
+# in D0, avoiding the buggy power transition.
+# Trade-off: minor extra power draw (~hundreds of mW) when idle on battery.
+ACTION=="add", SUBSYSTEM=="pci", ATTR{vendor}=="0x8086", ATTR{device}=="0x15d3", ATTR{power/control}="on"
+
+# Trigger PCI rescan when a Thunderbolt device is connected, so the Alpine Ridge
+# bridges re-enumerate after a dock unplug/replug (works around ACPI _PS3 bug
+# corrupting the PCI topology during teardown).
+ACTION=="add", SUBSYSTEM=="thunderbolt", RUN+="/bin/sh -c 'echo 1 > /sys/bus/pci/rescan'"
