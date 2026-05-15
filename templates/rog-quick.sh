@@ -13,28 +13,15 @@ ppt_watts=$(sensors 2>/dev/null | grep -i ppt | awk '{print $2}' | cut -d. -f1)
 #   70W:  70 /  84 /  98
 #   90W:  90 / 108 / 126
 #  120W: 120 / 130 / 130
-tdp_presets="15 30 45 70 90 120"
-tdp_labels=(
-  "TDP 15W — max battery"
-  "TDP 30W — light browsing"
-  "TDP 45W — moderate tasks"
-  "TDP 70W — default"
-  "TDP 90W — gaming"
-  "TDP 120W — max power"
-)
 
-# Build menu
-options="Default\n"
-i=0
-for w in $tdp_presets; do
-  options+="${tdp_labels[$i]}\n"
-  ((i++))
-done
-
-# Remove trailing newline for rofi
-options=${options%\\n}
-
-selected=$(echo -e "$options" | rofi -dmenu -p "TDP ${ppt_watts}W")
+selected=$(omarchy-menu-select "TDP ${ppt_watts}W" \
+  "󰁝  Default" \
+  "󰂃  15W — max battery" \
+  "󰂁  30W — light browsing" \
+  "󰁿  45W — moderate tasks" \
+  "󰁽  70W — default" \
+  "󰁻  90W — gaming" \
+  "󱐋  120W — max power")
 
 # Helper: set TDP via pkexec
 set_tdp() {
@@ -51,17 +38,17 @@ set_tdp() {
     echo $fppt > $PPT_DIR/ppt_fppt
     echo $sppt > $PPT_DIR/ppt_apu_sppt
     echo $sppt > $PPT_DIR/ppt_platform_sppt
-  " && notify-send "TDP" "${spl}W (SPL=$spl SPPT=$sppt fPPT=$fppt)"
+  " && notify-send -u low -t 2000 "󱐋    TDP ${spl}W" "SPL=$spl  SPPT=$sppt  fPPT=$fppt"
 }
 
 case $selected in
-  "Default"*)
-    profile=$(asusctl profile -p 2>/dev/null | sed -n 's/^Active profile is //p')
-    asusctl profile -P "$profile" && notify-send "TDP" "Reset to $profile defaults" ;;
-  "TDP 15W"*) set_tdp 15 ;;
-  "TDP 30W"*) set_tdp 30 ;;
-  "TDP 45W"*) set_tdp 45 ;;
-  "TDP 70W"*) set_tdp 70 ;;
-  "TDP 90W"*) set_tdp 90 ;;
-  "TDP 120W"*) set_tdp 120 ;;
+  *Default*)
+    profile=$(asusctl profile get 2>/dev/null | sed -n 's/^Active profile: //p')
+    asusctl profile set "$profile" && notify-send -u low -t 2000 "󱐋    TDP Reset" "Restored $profile defaults" ;;
+  *15W*) set_tdp 15 ;;
+  *30W*) set_tdp 30 ;;
+  *45W*) set_tdp 45 ;;
+  *70W*) set_tdp 70 ;;
+  *90W*) set_tdp 90 ;;
+  *120W*) set_tdp 120 ;;
 esac
