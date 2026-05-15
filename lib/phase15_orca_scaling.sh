@@ -58,6 +58,7 @@ phase15_run() {
 # GDK_DPI_SCALE=0.8 compensates across all displays.
 
 export GDK_DPI_SCALE=0.8
+export GDK_BACKEND=x11
 exec env LD_PRELOAD=/usr/lib/libsharpyuv.so Orca-BambuStudio "$@"
 LAUNCHER
     run_cmd chmod +x "$ORCA_LAUNCHER"
