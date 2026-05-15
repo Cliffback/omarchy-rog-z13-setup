@@ -4,7 +4,7 @@
 HYPRLAND_CONF="$HOME/.config/hypr/hyprland.conf"
 
 phase4_check() {
-    file_contains "$HYPRLAND_CONF" "ASUS ROG Flow Z13"
+    file_contains "$HYPRLAND_CONF" "XF86Launch3"
 }
 
 phase4_run() {
