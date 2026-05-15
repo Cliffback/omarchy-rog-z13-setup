@@ -1,20 +1,54 @@
 #!/bin/bash
+# ==============================================================================
+# Super Shift S - Omarchy Deck Mode Installer
+#
+# This script transforms an Omarchy (Arch Linux + Hyprland) desktop into a
+# dual-mode system: Desktop Mode (Hyprland) and Gaming Mode (Steam Big Picture
+# inside Gamescope — the same compositor the Steam Deck uses).
+#
+# It handles everything needed for this transformation:
+#   - Installing all Steam/gaming dependencies and GPU drivers
+#   - Configuring NVIDIA kernel parameters (nvidia-drm.modeset=1)
+#   - Setting up session switching between Hyprland and Gamescope via SDDM
+#   - Creating keybinds (Super+Shift+S to enter, Super+Shift+R to exit)
+#   - Configuring NetworkManager handoff (iwd <-> NM) for Steam network access
+#   - Setting up performance tuning (CPU governor, GPU power, kernel sysctl)
+#   - Auto-mounting external drives with Steam libraries
+#   - Configuring permissions (polkit, sudoers, udev) so it all works
+#     without password prompts during gameplay
+#
+# The script is idempotent — running it again skips steps that are already done.
+# ==============================================================================
+
 set -Euo pipefail
+# -E: ERR traps are inherited by functions, command substitutions, and subshells
+# -u: Treat unset variables as errors (catches typos in variable names)
+# -o pipefail: A pipeline fails if ANY command in it fails, not just the last one
 
 Super_Shift_S_VERSION="12.27"
 
+# Load configuration from /etc/gaming-mode.conf (system-wide) or
+# ~/.gaming-mode.conf (user override). This lets users disable performance
+# tuning by setting PERFORMANCE_MODE=disabled without editing the script.
 CONFIG_FILE="/etc/gaming-mode.conf"
 [[ -f "$HOME/.gaming-mode.conf" ]] && CONFIG_FILE="$HOME/.gaming-mode.conf"
 source "$CONFIG_FILE" 2>/dev/null || true
 : "${PERFORMANCE_MODE:=enabled}"
 
+# Flags that track whether the user needs to reboot or re-login after setup.
+# Various steps set these to 1 when they make changes that only take effect
+# after a session restart (e.g. adding user groups, changing kernel params).
 NEEDS_RELOGIN=0
 NEEDS_REBOOT=0
 
+# Logging helpers — consistent prefix makes it easy to spot installer output
+# in a busy terminal. err() goes to stderr so it can be captured separately.
 info(){ echo "[*] $*"; }
 warn(){ echo "[!] $*"; }
 err(){ echo "[!] $*" >&2; }
 
+# Fatal error handler — logs to the system journal (journalctl -t gaming-mode)
+# so failures can be diagnosed even after the terminal is closed.
 die() {
   local msg="$1"; local code="${2:-1}"
   echo "FATAL: $msg" >&2
@@ -22,6 +56,9 @@ die() {
   exit "$code"
 }
 
+# AUR helpers (yay, paru) can break after a major system update if their
+# own dependencies change. This checks whether the helper actually runs,
+# not just whether the binary exists on disk.
 check_aur_helper_functional() {
   local helper="$1"
   if $helper --version &>/dev/null; then
@@ -31,6 +68,10 @@ check_aur_helper_functional() {
   fi
 }
 
+# If yay is broken (common after Go or glibc updates), this rebuilds it
+# from scratch by cloning the AUR package and running makepkg. This avoids
+# a chicken-and-egg problem where you need an AUR helper to install an
+# AUR helper.
 rebuild_yay() {
   info "Attempting to rebuild yay..."
   local tmp_dir
@@ -49,14 +90,28 @@ rebuild_yay() {
   fi
 }
 
+# Sanity check — make sure we're actually running on an Omarchy system.
+# pacman = Arch Linux, hyprctl = Hyprland compositor, ~/.config/hypr = config dir.
+# If any of these are missing, the script can't do its job.
 validate_environment() {
   command -v pacman  >/dev/null || die "pacman required"
   command -v hyprctl >/dev/null || die "hyprctl required"
   [ -d "$HOME/.config/hypr" ] || die "Hyprland config directory not found (~/.config/hypr)"
 }
 
+# Quick check if a pacman package is installed. Used throughout the script
+# to avoid reinstalling things that are already present.
 check_package() { pacman -Qi "$1" &>/dev/null; }
 
+# Distinguishes AMD integrated GPUs (iGPUs/APUs) from discrete AMD GPUs (dGPUs).
+# This matters because Gaming Mode needs to target the RIGHT GPU — if you have
+# both an AMD APU and an NVIDIA dGPU, we want to use the NVIDIA card for gaming,
+# not the low-power APU that's driving your laptop display.
+#
+# It works by reading the PCI device info and matching against known AMD APU
+# codenames (Phoenix, Rembrandt, Van Gogh, etc.). If the name matches an APU
+# pattern, it returns 0 (true = this IS an iGPU). If it matches a discrete
+# GPU pattern (Navi, RX, Vega 56/64), it returns 1 (false = this is a dGPU).
 is_amd_igpu_card() {
   local card_path="$1"
   local device_path="$card_path/device"
@@ -73,6 +128,11 @@ is_amd_igpu_card() {
   return 1
 }
 
+# Intel-only GPU detection — Gaming Mode doesn't support Intel GPUs because
+# Gamescope (the compositor) doesn't work well with Intel graphics.
+# However, many laptops have Intel iGPU + NVIDIA/AMD dGPU — those are fine
+# because we use the discrete GPU for gaming. This function only blocks
+# systems where Intel is the ONLY GPU available.
 check_intel_only() {
   # Returns 0 (true) if system has Intel GPU but NO AMD/NVIDIA GPU
   # Returns 1 (false) if system has AMD/NVIDIA (Intel iGPU + dGPU is OK)
@@ -104,6 +164,17 @@ check_intel_only() {
   return 1  # Has AMD/NVIDIA (or no Intel), allow it
 }
 
+# Finds which monitors are physically connected to the discrete GPU.
+# Gaming Mode needs to know which display output to use (e.g. HDMI-1, DP-2)
+# and what resolution/refresh rate it supports.
+#
+# It scans /sys/class/drm/ for GPU cards, identifies the discrete GPU by its
+# driver (nvidia or amdgpu), then checks each connector (HDMI, DP, etc.) to
+# see if a monitor is plugged in. Resolution and refresh rate are read from
+# the EDID data that the monitor reports to the system.
+#
+# Uses bash nameref variables (_monitors, _dgpu_card, _dgpu_type) so the
+# caller gets the results without needing subshells or global variables.
 detect_dgpu_monitors() {
   local -n _monitors=$1
   local -n _dgpu_card=$2
@@ -162,6 +233,15 @@ detect_dgpu_monitors() {
   done
 }
 
+# NVIDIA GPUs require a kernel parameter (nvidia-drm.modeset=1) to work
+# properly with Wayland compositors like Gamescope. Without it, the GPU
+# won't expose DRM (Direct Rendering Manager) devices, and Gamescope
+# won't be able to take over the display.
+#
+# This function checks if the parameter is already set in the running
+# kernel's command line (/proc/cmdline). If not, it detects the bootloader
+# (Limine, GRUB, or systemd-boot) and offers to add it automatically.
+# A reboot is required after adding the parameter.
 check_nvidia_kernel_params() {
   local lspci_output
   lspci_output=$(/usr/bin/lspci 2>/dev/null)
@@ -236,6 +316,10 @@ check_nvidia_kernel_params() {
   esac
 }
 
+# Adds nvidia-drm.modeset=1 to the Limine bootloader config.
+# Limine stores kernel command line parameters on lines starting with "cmdline:".
+# This appends the parameter to the end of that line. A backup is created first
+# in case something goes wrong.
 configure_limine_nvidia() {
   local config_file="$1"
 
@@ -265,6 +349,9 @@ configure_limine_nvidia() {
   fi
 }
 
+# Adds nvidia-drm.modeset=1 to GRUB's kernel parameters.
+# GRUB stores defaults in /etc/default/grub — after modifying it, grub-mkconfig
+# must be run to regenerate the actual boot config at /boot/grub/grub.cfg.
 configure_grub_nvidia() {
   local grub_default="/etc/default/grub"
 
@@ -304,6 +391,14 @@ MSG
   warn "Gaming Mode may not work correctly without nvidia-drm.modeset=1"
 }
 
+# Sets NVIDIA-specific environment variables needed for Gamescope to work
+# properly with NVIDIA GPUs. These tell the system to use the NVIDIA DRM
+# backend for GBM (Generic Buffer Management), which is how Wayland
+# compositors allocate GPU memory for rendering.
+#
+# GBM_BACKEND=nvidia-drm         — Use NVIDIA's DRM backend for buffer allocation
+# __GLX_VENDOR_LIBRARY_NAME=nvidia — Use NVIDIA's GLX implementation
+# __VK_LAYER_NV_optimus=NVIDIA_only — On Optimus laptops, force Vulkan to use NVIDIA
 install_nvidia_deckmode_env() {
   local lspci_output
   lspci_output=$(/usr/bin/lspci 2>/dev/null)
@@ -332,6 +427,17 @@ EOF
   NEEDS_RELOGIN=1
 }
 
+# Steam on Linux requires a LOT of dependencies — 32-bit libraries (lib32-*),
+# Vulkan drivers, audio libraries, fonts, and GPU-specific drivers. This
+# function checks for everything Steam needs and offers to install what's missing.
+#
+# It handles three categories:
+#   1. Core deps — required for Steam to run at all (lib32 libs, Vulkan, audio)
+#   2. GPU deps — driver packages specific to NVIDIA or AMD
+#   3. Recommended — nice-to-haves like MangoHud (FPS overlay), Proton-GE, etc.
+#
+# The multilib repository must be enabled in pacman.conf for 32-bit packages
+# to be available — Steam is a 32-bit application that needs 32-bit libraries.
 check_steam_dependencies() {
   info "Checking Steam dependencies for Arch Linux..."
 
@@ -350,7 +456,7 @@ check_steam_dependencies() {
   echo
   if [[ ! $REPLY =~ ^[Nn]$ ]]; then
     info "Upgrading system..."
-    sudo pacman -Syu --noconfirm || die "Failed to upgrade system"
+    sudo pacman -Syu || die "Failed to upgrade system"
   fi
   echo ""
 
@@ -436,8 +542,8 @@ check_steam_dependencies() {
       "libva-nvidia-driver"
     )
     if ! check_package "nvidia" && ! check_package "nvidia-dkms" && ! check_package "nvidia-open-dkms"; then
-      info "Note: You may need to install 'nvidia' or 'nvidia-open-dkms' kernel module"
-      optional_deps+=("nvidia-open-dkms")
+      info "Note: You may need to install 'nvidia', 'nvidia-dkms', or 'nvidia-open-dkms' kernel module"
+      optional_deps+=("nvidia-dkms")
     fi
   fi
 
@@ -529,7 +635,7 @@ check_steam_dependencies() {
     echo
     if [[ ! $REPLY =~ ^[Nn]$ ]]; then
       info "Installing missing dependencies..."
-      sudo pacman -S --needed --noconfirm "${missing_deps[@]}" || die "Failed to install Steam dependencies"
+      sudo pacman -S --needed "${missing_deps[@]}" || die "Failed to install Steam dependencies"
       info "Required dependencies installed successfully"
     else
       die "Missing required Steam dependencies"
@@ -539,8 +645,6 @@ check_steam_dependencies() {
   fi
 
   echo ""
-  # Flush any leftover stdin from previous interactive pacman commands
-  read -t 0.1 -n 10000 discard 2>/dev/null || true
   if ((${#optional_deps[@]})); then
     echo "  RECOMMENDED PACKAGES (${#optional_deps[@]}):"
     for dep in "${optional_deps[@]}"; do
@@ -659,6 +763,11 @@ check_steam_dependencies() {
   check_steam_config
 }
 
+# Enables the multilib repository in /etc/pacman.conf. Multilib provides
+# 32-bit versions of libraries (lib32-*) which Steam requires because it's
+# a 32-bit application. By default on Arch, these lines are commented out.
+# This function uncomments them and runs a full system upgrade so the new
+# packages become available.
 enable_multilib_repo() {
   info "Enabling multilib repository..."
 
@@ -672,7 +781,7 @@ enable_multilib_repo() {
     read -p "Proceed with system upgrade? [Y/n]: " -n 1 -r
     echo
     if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-      sudo pacman -Syu --noconfirm || die "Failed to update and upgrade system"
+      sudo pacman -Syu || die "Failed to update and upgrade system"
     else
       die "System upgrade required after enabling multilib"
     fi
@@ -681,6 +790,14 @@ enable_multilib_repo() {
   fi
 }
 
+# Checks that the user is in the right Linux groups for gaming:
+#   - video:  Access to GPU hardware (required for rendering)
+#   - input:  Access to controllers, gamepads, and keyboard input devices
+#   - wheel:  Sudo/admin group, needed for NetworkManager control in gaming mode
+#
+# Also checks for some common performance tips like lowering vm.swappiness
+# (reduces swap usage during gaming) and increasing the open file limit
+# (needed for esync, a Steam/Proton feature that reduces CPU overhead).
 check_steam_config() {
   info "Checking Steam configuration..."
 
@@ -755,76 +872,23 @@ check_steam_config() {
   fi
 }
 
-bootstrap_steam() {
-  if ! check_package "steam"; then
-    warn "Steam is not installed - skipping bootstrap"
-    return 0
-  fi
-
-  if pgrep -x steam >/dev/null 2>&1; then
-    warn "Steam is already running - skipping bootstrap"
-    return 0
-  fi
-
-  local steam_dir="$HOME/.local/share/Steam"
-
-  if [[ -d "$steam_dir/ubuntu12_32" ]]; then
-    info "Steam is already bootstrapped"
-    return 0
-  fi
-
-  echo ""
-  echo "================================================================"
-  echo "  STEAM BOOTSTRAP & LOGIN"
-  echo "================================================================"
-  echo ""
-  echo "  Steam needs to run once to download updates and set up its"
-  echo "  runtime. This may take several minutes on first launch."
-  echo ""
-  echo "  Once Steam opens, please:"
-  echo "    1. Wait for it to finish updating"
-  echo "    2. Log in to your Steam account"
-  echo "    3. Close Steam when you're done"
-  echo ""
-  echo "  The installer will continue automatically after Steam closes."
-  echo ""
-  read -p "Launch Steam now to bootstrap and log in? [Y/n]: " -n 1 -r
-  echo
-
-  if [[ $REPLY =~ ^[Nn]$ ]]; then
-    info "Skipping Steam bootstrap - you can run Steam manually later"
-    return 0
-  fi
-
-  info "Launching Steam (first run may take a while)..."
-  steam &>/dev/null &
-
-  # Give Steam time to start up
-  sleep 5
-
-  if ! pgrep -x steam >/dev/null 2>&1; then
-    warn "Steam does not appear to have started - check for errors"
-    return 0
-  fi
-
-  info "Steam is running - log in and then close Steam to continue..."
-
-  while pgrep -x steam >/dev/null 2>&1; do
-    sleep 3
-  done
-
-  # Brief pause to let Steam fully clean up
-  sleep 2
-
-  if [[ -d "$steam_dir/ubuntu12_32" ]]; then
-    info "Steam bootstrapped successfully"
-  else
-    warn "Steam closed but runtime files not found - Steam may need another run"
-  fi
-
-  info "Continuing installation..."
-}
-
+# Sets up the permissions needed for Gaming Mode to tune system performance
+# WITHOUT requiring a password prompt. This creates three things:
+#
+# 1. UDEV RULES — Make CPU governor and GPU performance files writable by
+#    regular users. Normally these sysfs files are root-only, but udev rules
+#    can relax permissions when the devices are detected at boot.
+#
+# 2. SUDOERS RULES — Allow members of the "video" group to run specific
+#    sysctl commands (kernel scheduler tuning, VM settings, network buffers)
+#    and nvidia-smi commands without entering a password. These are narrowly
+#    scoped — only the exact commands needed, not blanket sudo access.
+#
+# 3. MEMLOCK LIMITS — Increase the memory lock limit to 2GB. Games using
+#    esync/fsync need to lock memory pages to avoid latency spikes.
+#
+# 4. PIPEWIRE CONFIG — Sets a lower audio quantum (buffer size) for reduced
+#    audio latency during gaming. Lower = less delay but more CPU usage.
 setup_performance_permissions() {
   local udev_rules_file="/etc/udev/rules.d/99-gaming-performance.rules"
   local sudoers_file="/etc/sudoers.d/gaming-mode-sysctl"
@@ -860,8 +924,6 @@ setup_performance_permissions() {
 
     if sudo tee "$udev_rules_file" > /dev/null <<'UDEV_RULES'
 KERNEL=="cpu[0-9]*", SUBSYSTEM=="cpu", ACTION=="add", RUN+="/bin/chmod 666 /sys/devices/system/cpu/%k/cpufreq/scaling_governor"
-KERNEL=="cpu[0-9]*", SUBSYSTEM=="cpu", ACTION=="add", RUN+="/bin/sh -c 'test -f /sys/devices/system/cpu/%k/cpufreq/energy_performance_preference && chmod 666 /sys/devices/system/cpu/%k/cpufreq/energy_performance_preference'"
-SUBSYSTEM=="pci", DRIVER=="nvidia", ACTION=="bind", RUN+="/bin/sh -c 'test -f /sys%p/power/control && chmod 666 /sys%p/power/control'"
 KERNEL=="card[0-9]", SUBSYSTEM=="drm", DRIVERS=="amdgpu", ACTION=="add", RUN+="/bin/chmod 666 /sys/class/drm/%k/device/power_dpm_force_performance_level"
 KERNEL=="card[0-9]", SUBSYSTEM=="drm", DRIVERS=="i915", ACTION=="add", RUN+="/bin/chmod 666 /sys/class/drm/%k/gt_boost_freq_mhz"
 KERNEL=="card[0-9]", SUBSYSTEM=="drm", DRIVERS=="i915", ACTION=="add", RUN+="/bin/chmod 666 /sys/class/drm/%k/gt_min_freq_mhz"
@@ -875,14 +937,12 @@ UDEV_RULES
   fi
 
   if [[ -f "$sudoers_file" ]]; then
-    info "Updating performance sudoers at $sudoers_file..."
-    sudo rm -f "$sudoers_file"
-  fi
+    info "Performance sudoers already exist at $sudoers_file"
+  else
+    info "Creating sudoers rule for Performance Mode sysctl tuning..."
 
-  info "Creating sudoers rule for Performance Mode sysctl tuning..."
-
-  local tee_output
-  tee_output=$(sudo tee "$sudoers_file" << 'SUDOERS_PERF' 2>&1
+    local tee_output
+    tee_output=$(sudo tee "$sudoers_file" << 'SUDOERS_PERF' 2>&1
 %video ALL=(ALL) NOPASSWD: /usr/bin/sysctl -w kernel.sched_autogroup_enabled=*
 %video ALL=(ALL) NOPASSWD: /usr/bin/sysctl -w kernel.sched_migration_cost_ns=*
 %video ALL=(ALL) NOPASSWD: /usr/bin/sysctl -w kernel.sched_min_granularity_ns=*
@@ -897,22 +957,18 @@ UDEV_RULES
 %video ALL=(ALL) NOPASSWD: /usr/bin/sysctl -w fs.file-max=*
 %video ALL=(ALL) NOPASSWD: /usr/bin/sysctl -w net.core.rmem_max=*
 %video ALL=(ALL) NOPASSWD: /usr/bin/sysctl -w net.core.wmem_max=*
-%video ALL=(ALL) NOPASSWD: /usr/bin/sysctl -w kernel.split_lock_mitigate=*
-%video ALL=(ALL) NOPASSWD: /usr/bin/sysctl -w vm.max_map_count=*
-%video ALL=(ALL) NOPASSWD: /usr/bin/sysctl -w vm.compaction_proactiveness=*
-%video ALL=(ALL) NOPASSWD: /usr/bin/sysctl -w kernel.nmi_watchdog=*
-%video ALL=(ALL) NOPASSWD: /usr/bin/tee /sys/kernel/mm/transparent_hugepage/enabled
 %video ALL=(ALL) NOPASSWD: /usr/bin/nvidia-smi -pm *
 %video ALL=(ALL) NOPASSWD: /usr/bin/nvidia-smi -pl *
 SUDOERS_PERF
 )
-  local tee_exit=$?
+    local tee_exit=$?
 
-  if [[ $tee_exit -eq 0 ]]; then
-    sudo chmod 0440 "$sudoers_file"
-    info "Performance sudoers created successfully"
-  else
-    err "Failed to create performance sudoers file (exit code: $tee_exit)"
+    if [[ $tee_exit -eq 0 ]]; then
+      sudo chmod 0440 "$sudoers_file"
+      info "Performance sudoers created successfully"
+    else
+      err "Failed to create performance sudoers file (exit code: $tee_exit)"
+    fi
   fi
 
   local memlock_file="/etc/security/limits.d/99-gaming-memlock.conf"
@@ -946,6 +1002,18 @@ PIPEWIRECONF
   return 0
 }
 
+# Configures shader cache settings for better gaming performance.
+# When a game runs for the first time, the GPU driver compiles shaders
+# (small programs that run on the GPU). This causes stuttering because
+# compilation takes time. By caching these compiled shaders to disk
+# (up to 12GB), the stuttering only happens once — next time the shader
+# loads instantly from cache.
+#
+# MESA_SHADER_CACHE — AMD/Intel open-source driver cache
+# __GL_SHADER_DISK_CACHE — NVIDIA proprietary driver cache
+# DXVK_STATE_CACHE — Proton/Wine DirectX-to-Vulkan translation cache
+# RADV_PERFTEST=gpl — AMD Vulkan: enables graphics pipeline library for
+#                      faster shader compilation
 setup_shader_cache() {
   local env_file="/etc/environment.d/99-shader-cache.conf"
 
@@ -996,9 +1064,24 @@ SHADERCACHE
   fi
 }
 
+# Silences a harmless but annoying warning from fcitx5 (input method framework).
+# fcitx5 complains about Wayland support on every login, even if you don't use
+# it for input. This sets FCITX_NO_WAYLAND_DIAGNOSE=1 to suppress the warning
+# in both Hyprland config and the user's environment.
 setup_fcitx_silence() {
   local env_dir="$HOME/.config/environment.d"
   local env_file="$env_dir/90-fcitx-wayland.conf"
+  local hypr_conf="$HOME/.config/hypr/hyprland.conf"
+
+  if [[ -f "$hypr_conf" ]]; then
+    if ! grep -q "FCITX_NO_WAYLAND_DIAGNOSE" "$hypr_conf" 2>/dev/null; then
+      echo "" >> "$hypr_conf"
+      echo "# Silence fcitx5 Wayland diagnose warning (gaming-mode installer)" >> "$hypr_conf"
+      echo "env = FCITX_NO_WAYLAND_DIAGNOSE,1" >> "$hypr_conf"
+      info "Added FCITX_NO_WAYLAND_DIAGNOSE to Hyprland config"
+      NEEDS_RELOGIN=1
+    fi
+  fi
 
   if [[ ! -f "$env_file" ]] || ! grep -q "FCITX_NO_WAYLAND_DIAGNOSE=1" "$env_file" 2>/dev/null; then
     mkdir -p "$env_dir" || return 0
@@ -1010,68 +1093,10 @@ EOF
   fi
 }
 
-setup_ananicy() {
-  if check_package "ananicy-cpp" || check_package "ananicy-cpp-git"; then
-    info "ananicy-cpp already installed"
-    if ! systemctl is-enabled --quiet ananicy-cpp.service 2>/dev/null; then
-      sudo systemctl enable --now ananicy-cpp.service 2>/dev/null && info "ananicy-cpp service enabled"
-    fi
-    # Still check for rules
-    if check_package "cachyos-ananicy-rules-git" || check_package "cachyos-ananicy-rules"; then
-      return 0
-    fi
-    info "ananicy-cpp is installed but CachyOS rules are missing, installing rules..."
-  else
-    echo ""
-    echo "================================================================"
-    echo "  PROCESS PRIORITY DAEMON (ananicy-cpp)"
-    echo "================================================================"
-    echo ""
-    echo "  ananicy-cpp automatically adjusts process priorities so games"
-    echo "  get more CPU time and background tasks don't cause stutter."
-    echo ""
-    read -p "Install ananicy-cpp? [Y/n]: " -n 1 -r
-    echo
-
-    if [[ $REPLY =~ ^[Nn]$ ]]; then
-      info "Skipping ananicy-cpp"
-      return 0
-    fi
-
-    # Install ananicy-cpp from official repos (pre-built binary)
-    info "Installing ananicy-cpp from official repos..."
-    sudo pacman -S --needed --noconfirm ananicy-cpp || {
-      warn "Failed to install ananicy-cpp"
-      return 0
-    }
-  fi
-
-  # Install CachyOS rules from AUR
-  local aur_helper=""
-  if command -v yay >/dev/null 2>&1 && check_aur_helper_functional yay; then
-    aur_helper="yay"
-  elif command -v paru >/dev/null 2>&1 && check_aur_helper_functional paru; then
-    aur_helper="paru"
-  fi
-
-  if [[ -z "$aur_helper" ]]; then
-    warn "No AUR helper found. Install CachyOS rules manually: yay -S cachyos-ananicy-rules-git"
-  else
-    info "Installing CachyOS ananicy rules..."
-    local aur_flags=(--needed --noconfirm)
-    if [[ "$aur_helper" == "yay" ]]; then
-      aur_flags+=(--answeredit None --answerclean None --answerdiff None)
-    elif [[ "$aur_helper" == "paru" ]]; then
-      aur_flags+=(--skipreview)
-    fi
-    $aur_helper -S "${aur_flags[@]}" cachyos-ananicy-rules-git || {
-      warn "Failed to install CachyOS ananicy rules from AUR"
-    }
-  fi
-
-  sudo systemctl enable --now ananicy-cpp.service 2>/dev/null && info "ananicy-cpp service enabled and started"
-}
-
+# Configures the Elephant app launcher (used in Omarchy) to launch desktop
+# applications through uwsm-app. UWSM (Universal Wayland Session Manager)
+# ensures apps are properly associated with the Wayland session, which
+# prevents issues with apps losing track of their display server.
 configure_elephant_launcher() {
   local cfg="$HOME/.config/elephant/desktopapplications.toml"
   if [[ ! -f "$cfg" ]]; then
@@ -1094,6 +1119,8 @@ configure_elephant_launcher() {
   restart_elephant_walker
 }
 
+# Restarts the Elephant/Walker launcher service so config changes take
+# effect immediately without requiring a logout.
 restart_elephant_walker() {
   if ! systemctl --user show-environment >/dev/null 2>&1; then
     return 0
@@ -1106,6 +1133,16 @@ restart_elephant_walker() {
   systemctl --user restart app-walker@autostart.service >/dev/null 2>&1 || true
 }
 
+# Installs the core packages that the Gaming Mode scripts themselves need
+# (as opposed to Steam's dependencies which are handled separately).
+# These include:
+#   - python-evdev: Reads raw keyboard input for the Super+Shift+R hotkey
+#   - libcap: Sets Linux capabilities on gamescope (cap_sys_nice for priority)
+#   - ntfs-3g: Mounts NTFS-formatted game drives (common for Windows dual-boot)
+#   - xcb-util-cursor: X11 cursor support needed by some Proton games
+#
+# After installing packages, it also runs the sub-setup functions for
+# performance permissions, shader cache, and gamescope capabilities.
 setup_requirements() {
   local -a required_packages=("steam" "gamescope" "mangohud" "python" "python-evdev" "libcap" "gamemode" "curl" "pciutils" "ntfs-3g" "xcb-util-cursor")
   local -a packages_to_install=()
@@ -1129,7 +1166,6 @@ setup_requirements() {
   setup_performance_permissions
   setup_fcitx_silence
   setup_shader_cache
-  setup_ananicy
   configure_elephant_launcher
 
   if [[ "${PERFORMANCE_MODE,,}" == "enabled" ]] && command -v gamescope >/dev/null 2>&1; then
@@ -1151,6 +1187,34 @@ setup_requirements() {
   fi
 }
 
+# ==============================================================================
+# SESSION SWITCHING — The heart of the installer
+#
+# This is the biggest and most important function. It sets up everything needed
+# to seamlessly switch between Desktop Mode (Hyprland) and Gaming Mode
+# (Gamescope + Steam Big Picture).
+#
+# The switching mechanism works through SDDM (the display/login manager):
+#   1. User presses Super+Shift+S in Hyprland
+#   2. switch-to-gaming script updates SDDM config to point to Gaming session
+#   3. SDDM restarts and auto-logs into the Gaming Mode session
+#   4. gamescope-session-nm-wrapper starts performance tuning, NetworkManager,
+#      drive mounting, keybind monitor, then launches Gamescope + Steam
+#   5. When done (Super+Shift+R or Steam > Exit to Desktop), the reverse happens
+#
+# This function creates ALL the scripts and config files needed for this flow:
+#   - Session wrapper (gamescope-session-nm-wrapper)
+#   - Switch scripts (switch-to-gaming, switch-to-desktop)
+#   - Keybind monitor (Python daemon using evdev for Super+Shift+R)
+#   - NetworkManager start/stop scripts (iwd <-> NM handoff)
+#   - Steam library auto-mount daemon
+#   - SDDM session entry and config
+#   - Polkit and sudoers rules for passwordless operation
+#   - Hyprland keybind for Super+Shift+S
+#
+# It also installs ChimeraOS's gamescope-session packages from AUR, which
+# provide the base session framework that the Steam Deck uses.
+# ==============================================================================
 setup_session_switching() {
   echo ""
   echo "================================================================"
@@ -1425,24 +1489,8 @@ setup_session_switching() {
           }
         fi
 
-        # Clean stale AUR cache to avoid "is not a clone of" errors
-        # when upstream source URLs change
-        for pkg in "${aur_packages[@]}"; do
-          local cache_dir="$HOME/.cache/$aur_helper/$pkg"
-          if [[ -d "$cache_dir" ]]; then
-            info "Clearing stale AUR cache for $pkg..."
-            rm -rf "$cache_dir"
-          fi
-        done
-
         info "Installing ChimeraOS gamescope-session packages..."
-        local aur_flags=(--needed --noconfirm)
-        if [[ "$aur_helper" == "yay" ]]; then
-          aur_flags+=(--answeredit None --answerclean None --answerdiff None)
-        elif [[ "$aur_helper" == "paru" ]]; then
-          aur_flags+=(--skipreview)
-        fi
-        $aur_helper -S "${aur_flags[@]}" "${aur_packages[@]}" || {
+        $aur_helper -S --needed --noconfirm --answeredit None --answerclean None --answerdiff None "${aur_packages[@]}" || {
           err "Failed to install gamescope-session packages"
           warn "You may need to install them manually: $aur_helper -S ${aur_packages[*]}"
         }
@@ -1460,6 +1508,17 @@ setup_session_switching() {
     info "ChimeraOS gamescope-session packages already installed (correct -git versions)"
   fi
 
+  # NetworkManager Integration
+  #
+  # Omarchy uses iwd (Intel Wireless Daemon) for WiFi, but Steam requires
+  # NetworkManager for its network settings UI. These can't run simultaneously
+  # without conflicts, so we create a managed handoff:
+  #   - On gaming session start: NM starts, takes over networking from iwd
+  #   - On gaming session exit: NM stops, iwd restarts and reconnects to WiFi
+  #
+  # If iwd is active, we configure NM to use iwd as its WiFi backend so they
+  # cooperate instead of fighting. If systemd-networkd is also running, we
+  # tell NM to leave ethernet interfaces alone to avoid conflicts.
   info "Setting up NetworkManager integration..."
   if systemctl is-active --quiet iwd; then
     info "Detected iwd is active - configuring NetworkManager to use iwd backend..."
@@ -1579,6 +1638,16 @@ NM_STOP
   sudo chmod +x "$nm_stop_script"
   info "Created NetworkManager start/stop scripts"
 
+  # Steam Library Auto-Mount Daemon
+  #
+  # Many gamers have games spread across multiple drives (external SSDs,
+  # NTFS partitions from a Windows dual-boot, etc.). This daemon:
+  #   1. Scans all connected drives for Steam library folders (steamapps/)
+  #   2. Mounts drives that contain Steam libraries via udisks2
+  #   3. Unmounts drives that DON'T have Steam libraries (keeps it clean)
+  #   4. Watches for hot-plugged drives (USB drives plugged in during gaming)
+  #
+  # It runs in the background during Gaming Mode and stops when you exit.
   local steam_mount_script="/usr/local/bin/steam-library-mount"
   info "Creating Steam library drive mount script..."
   sudo tee "$steam_mount_script" > /dev/null << 'STEAM_MOUNT'
@@ -1686,6 +1755,13 @@ STEAM_MOUNT
   sudo chmod +x "$steam_mount_script"
   info "Created $steam_mount_script"
 
+  # Polkit Rules
+  #
+  # Polkit is Linux's permission system for D-Bus actions. Steam communicates
+  # with NetworkManager over D-Bus, but by default only root can control NM.
+  # These rules allow members of the "wheel" group (admin users) to control
+  # NetworkManager without a password prompt — otherwise Steam would show
+  # a "permission denied" error when trying to access network settings.
   local polkit_rules="/etc/polkit-1/rules.d/50-gamescope-networkmanager.rules"
 
   if sudo test -f "$polkit_rules"; then
@@ -1720,6 +1796,10 @@ POLKIT_RULES
     fi
   fi
 
+  # Udisks2 Polkit Rules — same concept as above but for drive mounting.
+  # Allows the steam-library-mount daemon to mount/unmount drives without
+  # a password prompt. Without this, plugging in a USB drive with games
+  # would show a password dialog — not ideal in the middle of a gaming session.
   local udisks_polkit="/etc/polkit-1/rules.d/50-udisks-gaming.rules"
 
   if sudo test -f "$udisks_polkit"; then
@@ -1749,6 +1829,18 @@ UDISKS_POLKIT
     fi
   fi
 
+  # Gamescope Session Configuration
+  #
+  # This config file tells gamescope-session-plus (from ChimeraOS) how to
+  # set up the gaming display. It includes:
+  #   - Resolution and refresh rate (auto-detected from your monitor)
+  #   - Which display output to use (e.g. HDMI-1, DP-2)
+  #   - GPU-specific settings (NVIDIA vs AMD have different requirements)
+  #
+  # NVIDIA gets: GBM_BACKEND=nvidia-drm, VULKAN_ADAPTER pointing to the GPU
+  # AMD gets: ADAPTIVE_SYNC=1 (FreeSync), ENABLE_GAMESCOPE_HDR=1 (HDR support)
+  #
+  # NVIDIA is capped at 2560x1440 due to Gamescope limitations with NVIDIA GPUs.
   info "Creating gamescope-session-plus configuration..."
   local env_dir="${user_home}/.config/environment.d"
   local gamescope_conf="${env_dir}/gamescope-session-plus.conf"
@@ -1801,6 +1893,13 @@ GAMESCOPE_CONF
 
   info "Created $gamescope_conf"
 
+  # NVIDIA Gamescope Wrapper
+  #
+  # NVIDIA GPUs need the --force-composition flag in Gamescope to avoid
+  # rendering glitches. This wrapper script sits in front of the real
+  # gamescope binary — when Gaming Mode starts, it calls this wrapper
+  # instead, which adds the flag and then exec's the real gamescope.
+  # It checks if the flag is actually supported first (older versions don't have it).
   info "Creating NVIDIA gamescope wrapper..."
   local nvidia_wrapper_dir="/usr/local/lib/gamescope-nvidia"
   local nvidia_wrapper="${nvidia_wrapper_dir}/gamescope"
@@ -1818,6 +1917,24 @@ NVIDIA_WRAPPER
   sudo chmod +x "$nvidia_wrapper"
   info "Created $nvidia_wrapper"
 
+  # Main Session Wrapper — gamescope-session-nm-wrapper
+  #
+  # This is the master script that runs when Gaming Mode starts. It's the
+  # entry point for the entire gaming session and orchestrates everything:
+  #
+  #   1. Enables performance mode (CPU governor → performance, GPU max power)
+  #   2. Adds NVIDIA wrapper to PATH if needed
+  #   3. Starts NetworkManager for Steam's network access
+  #   4. Launches steam-library-mount daemon for external drive detection
+  #   5. Starts the keybind monitor (listens for Super+Shift+R to exit)
+  #   6. Sets Steam-specific environment variables
+  #   7. Launches gamescope-session-plus (the actual Gamescope + Steam session)
+  #
+  # When the session ends (for any reason), the cleanup trap:
+  #   - Kills the mount daemon and keybind monitor
+  #   - Stops NetworkManager and restores iwd WiFi
+  #   - Restores balanced power mode (CPU powersave, GPU defaults)
+  #   - Removes the session marker file
   info "Creating NetworkManager session wrapper..."
   local nm_wrapper="/usr/local/bin/gamescope-session-nm-wrapper"
 
@@ -1828,15 +1945,6 @@ log() { logger -t gamescope-wrapper "$*"; echo "$*"; }
 enable_performance_mode() {
     log "Enabling performance mode..."
 
-    # Save original values for restore
-    ORIG_GOV=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null || echo "powersave")
-    ORIG_EPP=$(cat /sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference 2>/dev/null || echo "balance_performance")
-    ORIG_SPLIT_LOCK=$(sysctl -n kernel.split_lock_mitigate 2>/dev/null || echo "")
-    ORIG_MAX_MAP=$(sysctl -n vm.max_map_count 2>/dev/null || echo "1048576")
-    ORIG_COMPACTION=$(sysctl -n vm.compaction_proactiveness 2>/dev/null || echo "20")
-    ORIG_NMI=$(sysctl -n kernel.nmi_watchdog 2>/dev/null || echo "1")
-    ORIG_THP=$(cat /sys/kernel/mm/transparent_hugepage/enabled 2>/dev/null | grep -oP '\[\K[^\]]+' || echo "always")
-
     # Set CPU governor to performance
     for gov in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
         echo performance > "$gov" 2>/dev/null && log "CPU governor set to performance"
@@ -1846,41 +1954,16 @@ enable_performance_mode() {
         echo performance > "$gov" 2>/dev/null
     done
 
-    # AMD pstate: set energy performance preference to performance
-    for epp in /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference; do
-        if [[ -w "$epp" ]]; then
-            echo performance > "$epp" 2>/dev/null
-        fi
-    done
-    if [[ -f /sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference ]]; then
-        log "AMD pstate EPP set to performance"
-    fi
-
-    # Kernel tuning: disable split lock mitigation (prevents stalls in some Proton games)
-    [[ -n "$ORIG_SPLIT_LOCK" ]] && sudo -n /usr/bin/sysctl -w kernel.split_lock_mitigate=0 2>/dev/null && log "Split lock mitigation disabled"
-
-    # Increase max memory map areas (prevents crashes in heavy Proton titles)
-    sudo -n /usr/bin/sysctl -w vm.max_map_count=2147483642 2>/dev/null && log "vm.max_map_count increased"
-
-    # Disable proactive memory compaction (reduces latency spikes)
-    sudo -n /usr/bin/sysctl -w vm.compaction_proactiveness=0 2>/dev/null && log "Proactive compaction disabled"
-
-    # Disable NMI watchdog (frees a hardware perf counter)
-    sudo -n /usr/bin/sysctl -w kernel.nmi_watchdog=0 2>/dev/null && log "NMI watchdog disabled"
-
-    # Set transparent hugepages to madvise (avoids background compaction stalls)
-    echo madvise | sudo -n /usr/bin/tee /sys/kernel/mm/transparent_hugepage/enabled >/dev/null 2>&1 && log "THP set to madvise"
-
     # NVIDIA dGPU performance mode
     if command -v nvidia-smi &>/dev/null; then
         # Enable persistence mode (keeps GPU initialized)
-        sudo -n /usr/bin/nvidia-smi -pm 1 2>/dev/null && log "NVIDIA persistence mode enabled"
+        sudo -n nvidia-smi -pm 1 2>/dev/null && log "NVIDIA persistence mode enabled"
 
         # Set power limit to maximum
         local max_power
         max_power=$(nvidia-smi --query-gpu=power.max_limit --format=csv,noheader,nounits 2>/dev/null | head -1 | cut -d'.' -f1)
         if [[ -n "$max_power" && "$max_power" -gt 0 ]]; then
-            sudo -n /usr/bin/nvidia-smi -pl "$max_power" 2>/dev/null && log "NVIDIA power limit set to ${max_power}W"
+            sudo -n nvidia-smi -pl "$max_power" 2>/dev/null && log "NVIDIA power limit set to ${max_power}W"
         fi
 
         # Prevent NVIDIA GPU runtime suspend
@@ -1903,26 +1986,10 @@ enable_performance_mode() {
 restore_balanced_mode() {
     log "Restoring balanced mode..."
 
-    # Restore CPU governor to original
+    # Restore CPU governor to powersave/schedutil
     for gov in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
-        echo "${ORIG_GOV:-powersave}" > "$gov" 2>/dev/null
+        echo powersave > "$gov" 2>/dev/null
     done
-
-    # AMD pstate: restore energy performance preference
-    for epp in /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference; do
-        if [[ -w "$epp" ]]; then
-            echo "${ORIG_EPP:-balance_performance}" > "$epp" 2>/dev/null
-        fi
-    done
-
-    # Restore kernel tuning to original values
-    [[ -n "${ORIG_SPLIT_LOCK:-}" ]] && sudo -n /usr/bin/sysctl -w kernel.split_lock_mitigate="${ORIG_SPLIT_LOCK}" 2>/dev/null
-    sudo -n /usr/bin/sysctl -w vm.max_map_count="${ORIG_MAX_MAP:-1048576}" 2>/dev/null
-    sudo -n /usr/bin/sysctl -w vm.compaction_proactiveness="${ORIG_COMPACTION:-20}" 2>/dev/null
-    sudo -n /usr/bin/sysctl -w kernel.nmi_watchdog="${ORIG_NMI:-1}" 2>/dev/null
-
-    # Restore transparent hugepages
-    echo "${ORIG_THP:-always}" | sudo -n /usr/bin/tee /sys/kernel/mm/transparent_hugepage/enabled >/dev/null 2>&1
 
     # NVIDIA dGPU restore
     if command -v nvidia-smi &>/dev/null; then
@@ -1930,7 +1997,7 @@ restore_balanced_mode() {
         local default_power
         default_power=$(nvidia-smi --query-gpu=power.default_limit --format=csv,noheader,nounits 2>/dev/null | head -1 | cut -d'.' -f1)
         if [[ -n "$default_power" && "$default_power" -gt 0 ]]; then
-            sudo -n /usr/bin/nvidia-smi -pl "$default_power" 2>/dev/null
+            sudo -n nvidia-smi -pl "$default_power" 2>/dev/null
         fi
 
         # Re-enable NVIDIA GPU runtime suspend (power saving)
@@ -1944,7 +2011,7 @@ restore_balanced_mode() {
         done
 
         # Disable persistence mode (allow GPU to sleep)
-        sudo -n /usr/bin/nvidia-smi -pm 0 2>/dev/null
+        sudo -n nvidia-smi -pm 0 2>/dev/null
     fi
 
     # Restore power profile to balanced
@@ -1955,16 +2022,11 @@ restore_balanced_mode() {
     log "Balanced mode restored"
 }
 
-CLEANUP_DONE=false
 cleanup() {
-    if $CLEANUP_DONE; then return; fi
-    CLEANUP_DONE=true
     pkill -f steam-library-mount 2>/dev/null || true
     pkill -f gaming-keybind-monitor 2>/dev/null || true
     sudo -n /usr/local/bin/gamescope-nm-stop 2>/dev/null || true
     restore_balanced_mode
-    # Unmask sleep targets in case switch-to-desktop wasn't called
-    sudo -n /usr/bin/systemctl unmask sleep.target suspend.target hibernate.target hybrid-sleep.target 2>/dev/null || true
     rm -f /tmp/.gaming-session-active
 }
 trap cleanup EXIT INT TERM
@@ -1973,8 +2035,7 @@ trap cleanup EXIT INT TERM
 enable_performance_mode
 
 if /usr/bin/lspci 2>/dev/null | grep -qi nvidia; then
-    export GAMESCOPE_BIN="/usr/local/lib/gamescope-nvidia/gamescope"
-    log "Using NVIDIA gamescope wrapper with --force-composition"
+    export PATH="/usr/local/lib/gamescope-nvidia:$PATH"
 fi
 
 sudo -n /usr/local/bin/gamescope-nm-start 2>/dev/null || {
@@ -2028,6 +2089,12 @@ NM_WRAPPER
   sudo chmod +x "$nm_wrapper"
   info "Created $nm_wrapper"
 
+  # SDDM Session Entry
+  #
+  # SDDM (the login/display manager) needs a .desktop file to know about
+  # Gaming Mode as a session option. This is what tells SDDM "when you
+  # auto-login to the gaming session, run this script." It's placed in
+  # /usr/share/wayland-sessions/ alongside the normal Hyprland session.
   info "Creating SDDM session entry..."
   local session_desktop="/usr/share/wayland-sessions/gamescope-session-steam-nm.desktop"
 
@@ -2042,6 +2109,12 @@ SESSION_DESKTOP
 
   info "Created $session_desktop"
 
+  # os-session-select — Steam's "Exit to Desktop" handler
+  #
+  # When you click Steam > Power > "Exit to Desktop" inside Gaming Mode,
+  # Steam calls /usr/lib/os-session-select. On a real Steam Deck this
+  # switches to Desktop Mode. Our version does the same thing — it updates
+  # SDDM to boot back into Hyprland and restarts the display manager.
   info "Creating session-select script..."
   local os_session_select="/usr/lib/os-session-select"
 
@@ -2051,12 +2124,9 @@ rm -f /tmp/.gaming-session-active
 sudo -n /usr/local/bin/gaming-session-switch desktop 2>/dev/null || {
   echo "Warning: Failed to update session config"
 }
-sudo -n /usr/bin/systemctl unmask sleep.target suspend.target hibernate.target hybrid-sleep.target 2>/dev/null
-sudo -n /usr/bin/rfkill unblock bluetooth 2>/dev/null || true
-sudo -n /usr/bin/systemctl start bluetooth.service 2>/dev/null || true
 timeout 5 steam -shutdown 2>/dev/null || true
 sleep 1
-nohup sudo -n /usr/bin/systemctl restart sddm &>/dev/null &
+nohup sudo -n systemctl restart sddm &>/dev/null &
 disown
 exit 0
 OS_SESSION_SELECT
@@ -2064,13 +2134,22 @@ OS_SESSION_SELECT
   sudo chmod +x "$os_session_select"
   info "Created $os_session_select"
 
+  # switch-to-gaming — Called when Super+Shift+S is pressed in Hyprland
+  #
+  # This script handles the transition from Desktop to Gaming Mode:
+  #   1. Masks suspend targets — prevents the system from sleeping when the
+  #      monitor briefly disconnects during the display manager restart
+  #   2. Updates SDDM config to auto-login to the gaming session
+  #   3. Kills any leftover gamescope processes from a previous session
+  #   4. Switches to VT2 (virtual terminal) to avoid display conflicts
+  #   5. Restarts SDDM, which auto-logs into Gaming Mode
   info "Creating switch-to-gaming script..."
   local switch_script="/usr/local/bin/switch-to-gaming"
 
   sudo tee "$switch_script" > /dev/null << 'SWITCH_SCRIPT'
 #!/bin/bash
 # Inhibit suspend FIRST - prevents suspend when monitor detaches during switch
-sudo -n /usr/bin/systemctl mask --runtime sleep.target suspend.target hibernate.target hybrid-sleep.target 2>/dev/null
+sudo -n systemctl mask --runtime sleep.target suspend.target hibernate.target hybrid-sleep.target 2>/dev/null
 sudo -n /usr/local/bin/gaming-session-switch gaming 2>/dev/null || {
   notify-send -u critical -t 3000 "Gaming Mode" "Failed to update session config" 2>/dev/null || true
 }
@@ -2078,14 +2157,23 @@ notify-send -u normal -t 2000 "Gaming Mode" "Switching to Gaming Mode..." 2>/dev
 pkill -9 gamescope 2>/dev/null || true
 pkill -9 -f gamescope-session 2>/dev/null || true
 sleep 1
-sudo -n /usr/bin/chvt 2 2>/dev/null || true
+sudo -n chvt 2 2>/dev/null || true
 sleep 0.3
-sudo -n /usr/bin/systemctl restart sddm
+sudo -n systemctl restart sddm
 SWITCH_SCRIPT
 
   sudo chmod +x "$switch_script"
   info "Created $switch_script"
 
+  # switch-to-desktop — Called when Super+Shift+R is pressed in Gaming Mode
+  #
+  # This script handles the transition back from Gaming to Desktop Mode:
+  #   1. Unmasks suspend targets (re-enables sleep/hibernate)
+  #   2. Restores Bluetooth (disabled during gaming to reduce interference)
+  #   3. Gracefully shuts down Steam (timeout 5s, then force kill)
+  #   4. Kills gamescope with SIGTERM first, then SIGKILL if it won't die
+  #   5. Updates SDDM config back to Hyprland session
+  #   6. Restarts SDDM, which auto-logs into Desktop Mode
   info "Creating switch-to-desktop script..."
   local switch_desktop_script="/usr/local/bin/switch-to-desktop"
 
@@ -2096,7 +2184,7 @@ if [[ ! -f /tmp/.gaming-session-active ]]; then
 fi
 rm -f /tmp/.gaming-session-active
 
-sudo -n /usr/bin/systemctl unmask sleep.target suspend.target hibernate.target hybrid-sleep.target 2>/dev/null
+sudo -n systemctl unmask sleep.target suspend.target hibernate.target hybrid-sleep.target 2>/dev/null
 sudo -n /usr/local/bin/gaming-session-switch desktop 2>/dev/null || true
 
 # Re-enable Bluetooth
@@ -2121,12 +2209,11 @@ fi
 
 sleep 2
 
-sudo -n /usr/bin/chvt 2 2>/dev/null || true
+sudo -n chvt 2 2>/dev/null || true
 sleep 0.5
-# Use nohup + restart (atomic) so the SDDM restart survives session teardown.
-# stop+start fails because SDDM kills the session scope (including this script)
-# before start can execute.
-nohup sudo -n /usr/bin/systemctl restart sddm &>/dev/null &
+sudo -n systemctl stop sddm 2>/dev/null || true
+sleep 1
+sudo -n systemctl start sddm &
 disown
 exit 0
 SWITCH_DESKTOP
@@ -2134,6 +2221,17 @@ SWITCH_DESKTOP
   sudo chmod +x "$switch_desktop_script"
   info "Created $switch_desktop_script"
 
+  # Keybind Monitor — Python daemon for Super+Shift+R in Gaming Mode
+  #
+  # Inside Gamescope, Hyprland isn't running so its keybinds don't work.
+  # This Python script uses python-evdev to read raw keyboard input directly
+  # from /dev/input/event* devices, bypassing the compositor entirely.
+  #
+  # It uses Linux's selector (epoll) interface to efficiently monitor multiple
+  # keyboard devices simultaneously without busy-waiting. When it detects
+  # Super+Shift+R, it calls switch-to-desktop to return to Hyprland.
+  #
+  # The user must be in the "input" group to read /dev/input/ devices.
   info "Creating gaming mode keybind monitor..."
   local keybind_monitor="/usr/local/bin/gaming-keybind-monitor"
 
@@ -2226,6 +2324,19 @@ KEYBIND_MONITOR
   sudo chmod +x "$keybind_monitor"
   info "Created $keybind_monitor"
 
+  # SDDM Session Switching Config
+  #
+  # SDDM supports auto-login — it can automatically log in a user to a
+  # specific session without showing the login screen. This config file
+  # controls WHICH session SDDM auto-logs into.
+  #
+  # The switching mechanism works by editing this file:
+  #   - "Session=hyprland-uwsm" → boots into Desktop Mode
+  #   - "Session=gamescope-session-steam-nm" → boots into Gaming Mode
+  #
+  # The gaming-session-switch helper script toggles this value, then SDDM
+  # is restarted to pick up the change. The "zz-" prefix ensures this
+  # config loads LAST and overrides any other SDDM autologin settings.
   info "Creating SDDM session switching config..."
   local sddm_gaming_conf="/etc/sddm.conf.d/zz-gaming-session.conf"
 
@@ -2274,6 +2385,16 @@ SESSION_HELPER
   sudo chmod +x "$session_helper"
   info "Created $session_helper"
 
+  # Sudoers Rules for Session Switching
+  #
+  # The session switching scripts need to run several commands as root
+  # (restart SDDM, start/stop NetworkManager, control Bluetooth, etc.).
+  # These sudoers rules allow members of the "video" and "wheel" groups
+  # to run ONLY these specific commands without a password.
+  #
+  # This is much safer than giving blanket NOPASSWD sudo — each rule
+  # is scoped to a specific binary path. An attacker can't leverage
+  # these rules to run arbitrary commands as root.
   local sudoers_session="/etc/sudoers.d/gaming-session-switch"
 
   if [[ -f "$sudoers_session" ]]; then
@@ -2285,11 +2406,9 @@ SESSION_HELPER
 
   local switch_output
   switch_output=$(sudo tee "$sudoers_session" << 'SUDOERS_SWITCH' 2>&1
-%video ALL=(ALL) NOPASSWD: /usr/local/bin/gaming-session-switch *
+%video ALL=(ALL) NOPASSWD: /usr/local/bin/gaming-session-switch
 %video ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart sddm
-%video ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop sddm
-%video ALL=(ALL) NOPASSWD: /usr/bin/systemctl start sddm
-%video ALL=(ALL) NOPASSWD: /usr/bin/chvt *
+%video ALL=(ALL) NOPASSWD: /usr/bin/chvt
 %video ALL=(ALL) NOPASSWD: /usr/bin/systemctl mask --runtime sleep.target suspend.target hibernate.target hybrid-sleep.target
 %video ALL=(ALL) NOPASSWD: /usr/bin/systemctl unmask sleep.target suspend.target hibernate.target hybrid-sleep.target
 %wheel ALL=(ALL) NOPASSWD: /usr/bin/systemctl start NetworkManager.service
@@ -2310,82 +2429,24 @@ SUDOERS_SWITCH
   fi
 
   info "Adding Hyprland keybind..."
-  local hypr_dir="${user_home}/.config/hypr"
-  local gaming_conf="${hypr_dir}/gaming-mode.conf"
-  local hypr_conf="${hypr_dir}/hyprland.conf"
+  local hypr_bindings_conf="${user_home}/.config/hypr/bindings.conf"
 
-  # Create a dedicated gaming-mode config file (survives omarchy-refresh-hyprland)
-  cat > "$gaming_conf" << 'GAMING_CONF'
-# Gaming Mode keybind (managed by Super_Shift_S installer - do not edit)
-bindd = SUPER SHIFT, S, Gaming Mode, exec, /usr/local/bin/switch-to-gaming
-GAMING_CONF
-  info "Created $gaming_conf"
-
-  # Source the gaming config from hyprland.conf if not already sourced
-  if [[ -f "$hypr_conf" ]]; then
-    if ! grep -q "gaming-mode.conf" "$hypr_conf" 2>/dev/null; then
-      echo "" >> "$hypr_conf"
-      echo "# Gaming Mode (managed by Super_Shift_S installer)" >> "$hypr_conf"
-      echo "source = ~/.config/hypr/gaming-mode.conf" >> "$hypr_conf"
-      info "Added gaming-mode.conf source to hyprland.conf"
-    else
-      info "gaming-mode.conf already sourced in hyprland.conf"
-    fi
+  if [[ ! -f "$hypr_bindings_conf" ]]; then
+    warn "bindings.conf not found at $hypr_bindings_conf - skipping keybind setup"
+    warn "You can manually add: bindd = SUPER SHIFT, S, Gaming Mode, exec, /usr/local/bin/switch-to-gaming"
   else
-    warn "hyprland.conf not found - you'll need to add: source = ~/.config/hypr/gaming-mode.conf"
-  fi
+    if grep -q "switch-to-gaming" "$hypr_bindings_conf" 2>/dev/null; then
+      info "Gaming Mode keybind already exists in bindings.conf"
+    else
+      cat >> "$hypr_bindings_conf" << 'HYPR_GAMING'
 
-  # Remove old keybind from bindings.conf if it exists (cleanup from prior installs)
-  local hypr_bindings_conf="${hypr_dir}/bindings.conf"
-  if [[ -f "$hypr_bindings_conf" ]] && grep -q "switch-to-gaming" "$hypr_bindings_conf" 2>/dev/null; then
-    sed -i '/switch-to-gaming/d' "$hypr_bindings_conf"
-    sed -i '/^$/N;/^\n$/d' "$hypr_bindings_conf"
-    info "Removed old keybind from bindings.conf (now in gaming-mode.conf)"
+bindd = SUPER SHIFT, S, Gaming Mode, exec, /usr/local/bin/switch-to-gaming
+HYPR_GAMING
+      info "Added Gaming Mode keybind to bindings.conf"
+    fi
   fi
 
   info "Steam compatibility scripts provided by gamescope-session-steam-git"
-
-  info "Setting up Omarchy post-update hook..."
-  local hooks_dir="${user_home}/.config/omarchy/hooks"
-  local post_update_hook="${hooks_dir}/post-update"
-  local gaming_hook_marker="# gaming-mode-hook"
-
-  mkdir -p "$hooks_dir"
-
-  if [[ -f "$post_update_hook" ]]; then
-    if ! grep -q "$gaming_hook_marker" "$post_update_hook" 2>/dev/null; then
-      cat >> "$post_update_hook" << 'GAMING_HOOK'
-
-# gaming-mode-hook
-# Re-add gaming-mode.conf source after omarchy-refresh-hyprland
-if [[ -f "$HOME/.config/hypr/gaming-mode.conf" ]] && [[ -f "$HOME/.config/hypr/hyprland.conf" ]]; then
-  if ! grep -q "gaming-mode.conf" "$HOME/.config/hypr/hyprland.conf" 2>/dev/null; then
-    echo "" >> "$HOME/.config/hypr/hyprland.conf"
-    echo "# Gaming Mode (managed by Super_Shift_S installer)" >> "$HOME/.config/hypr/hyprland.conf"
-    echo "source = ~/.config/hypr/gaming-mode.conf" >> "$HOME/.config/hypr/hyprland.conf"
-  fi
-fi
-GAMING_HOOK
-      info "Added gaming-mode hook to existing post-update"
-    else
-      info "Gaming-mode post-update hook already present"
-    fi
-  else
-    cat > "$post_update_hook" << 'GAMING_HOOK'
-#!/bin/bash
-# gaming-mode-hook
-# Re-add gaming-mode.conf source after omarchy-refresh-hyprland
-if [[ -f "$HOME/.config/hypr/gaming-mode.conf" ]] && [[ -f "$HOME/.config/hypr/hyprland.conf" ]]; then
-  if ! grep -q "gaming-mode.conf" "$HOME/.config/hypr/hyprland.conf" 2>/dev/null; then
-    echo "" >> "$HOME/.config/hypr/hyprland.conf"
-    echo "# Gaming Mode (managed by Super_Shift_S installer)" >> "$HOME/.config/hypr/hyprland.conf"
-    echo "source = ~/.config/hypr/gaming-mode.conf" >> "$HOME/.config/hypr/hyprland.conf"
-  fi
-fi
-GAMING_HOOK
-    chmod +x "$post_update_hook"
-    info "Created post-update hook for gaming-mode keybind persistence"
-  fi
 
   info "Verifying NetworkManager integration..."
   echo ""
@@ -2451,7 +2512,7 @@ GAMING_HOOK
   echo "    - /usr/local/bin/switch-to-gaming"
   echo "    - /usr/local/bin/switch-to-desktop"
   echo "    - /usr/local/bin/gaming-keybind-monitor (Super+Shift+R)"
-  echo "    - ~/.config/hypr/gaming-mode.conf (keybind - survives omarchy-refresh)"
+  echo "    - ~/.config/hypr/bindings.conf (keybind added)"
   echo ""
   echo "  NetworkManager integration (Steam network access):"
   echo "    - /usr/local/bin/gamescope-nm-start"
@@ -2486,6 +2547,20 @@ GAMING_HOOK
   return 0
 }
 
+# Comprehensive verification — checks every file, permission, package, group,
+# and service that Gaming Mode depends on. This is the --verify mode that
+# users can run to diagnose problems without re-running the full installer.
+#
+# It checks:
+#   - All installed files exist and have correct permissions
+#   - Hyprland keybind is configured
+#   - ChimeraOS AUR packages are installed
+#   - Steam library mount script and udisks2 are ready
+#   - python-evdev works and user is in the input group
+#   - Gamescope session config exists
+#   - User is in required groups (video, input, wheel)
+#   - Service states (NM should be inactive, iwd should be active)
+#   - Sudo permissions work without password
 verify_installation() {
   echo ""
   echo "================================================================"
@@ -2562,19 +2637,16 @@ verify_installation() {
   echo ""
   echo "  HYPRLAND KEYBIND:"
   echo "  -----------------"
-  local gaming_conf="$HOME/.config/hypr/gaming-mode.conf"
-  local hypr_main="$HOME/.config/hypr/hyprland.conf"
-  if [[ -f "$gaming_conf" ]] && grep -q "switch-to-gaming" "$gaming_conf" 2>/dev/null; then
-    echo "  ✓ Gaming Mode keybind (Super+Shift+S) in gaming-mode.conf"
-    if [[ -f "$hypr_main" ]] && grep -q "gaming-mode.conf" "$hypr_main" 2>/dev/null; then
-      echo "  ✓ gaming-mode.conf sourced in hyprland.conf"
+  local hypr_bindings="$HOME/.config/hypr/bindings.conf"
+  if [[ -f "$hypr_bindings" ]]; then
+    if grep -q "switch-to-gaming" "$hypr_bindings" 2>/dev/null; then
+      echo "  ✓ Gaming Mode keybind (Super+Shift+S) configured"
     else
-      echo "  ✗ gaming-mode.conf NOT sourced in hyprland.conf"
+      echo "  ✗ Gaming Mode keybind NOT found in bindings.conf"
       all_ok=false
     fi
   else
-    echo "  ✗ Gaming Mode keybind NOT found"
-    all_ok=false
+    echo "  ⚠ bindings.conf not found - keybind needs manual setup"
   fi
 
   echo ""
@@ -2742,6 +2814,17 @@ verify_installation() {
   $all_ok && return 0 || return 1
 }
 
+# Main orchestrator — runs the full installation process in order.
+# Each step builds on the previous one:
+#   1. Authenticate sudo (and clear cached credentials first for a fresh prompt)
+#   2. Validate we're on an Omarchy system
+#   3. Install Steam dependencies and GPU drivers
+#   4. Configure NVIDIA kernel parameters (if applicable)
+#   5. Set NVIDIA environment variables (if applicable)
+#   6. Install script requirements and performance permissions
+#   7. Set up session switching (the big one — all the scripts and configs)
+#   8. Prompt for reboot/relogin if needed
+#   9. Optionally run verification to confirm everything worked
 execute_setup() {
   sudo -k
   sudo -v || die "sudo authentication required"
@@ -2756,7 +2839,6 @@ execute_setup() {
   echo ""
 
   check_steam_dependencies
-  bootstrap_steam
   check_nvidia_kernel_params
   install_nvidia_deckmode_env
   setup_requirements
@@ -2831,6 +2913,11 @@ show_help() {
   echo ""
 }
 
+# Command-line argument parsing — determines what mode to run in.
+# With no arguments, runs the full installation. Otherwise:
+#   --help/-h:    Show usage information
+#   --verify/-v:  Only check if everything is installed correctly
+#   --version:    Print version number
 case "${1:-}" in
   --help|-h)
     show_help
