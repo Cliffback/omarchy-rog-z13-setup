@@ -26,6 +26,7 @@ source "$SCRIPT_DIR/lib/phase10_thunderbolt_dock.sh"
 source "$SCRIPT_DIR/lib/phase11_controller_gaming.sh"
 source "$SCRIPT_DIR/lib/phase12_audio_routing.sh"
 source "$SCRIPT_DIR/lib/phase13_hibernate_wake.sh"
+source "$SCRIPT_DIR/lib/phase14_lychee_scaling.sh"
 
 # Track state
 NEEDS_REBOOT=0
@@ -110,6 +111,7 @@ run_phase 10 "Thunderbolt Dock Fix (optional)" phase10_check phase10_run || true
 run_phase 11 "Controller Gaming Trigger (optional)" phase11_check phase11_run || true
 run_phase 12 "Audio Sink Routing" phase12_check phase12_run || true
 run_phase 13 "Hibernate Wake Fix (optional)" phase13_check phase13_run || true
+run_phase 14 "Lychee Slicer DPI Scaling (optional)" phase14_check phase14_run || true
 
 # ── Summary ──────────────────────────────────────────────────────────────
 
