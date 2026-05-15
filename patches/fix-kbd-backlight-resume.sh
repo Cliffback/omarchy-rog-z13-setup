@@ -1,17 +1,21 @@
 #!/bin/bash
 set -euo pipefail
 
-# Patch omarchy to save/restore keyboard backlight across suspend/resume.
+# Patch omarchy to save/restore keyboard backlight across suspend/resume/lock.
 #
-# The issue: hypridle's before_sleep_cmd uses OMARCHY_LOCK_ONLY=true which
-# skips omarchy-brightness-keyboard off (the save step). On resume,
-# omarchy-brightness-keyboard restore has no saved state, so the backlight
-# is not restored after suspend.
+# Root cause (suspend): hypridle's before_sleep_cmd uses OMARCHY_LOCK_ONLY=true
+# which skips saving keyboard brightness. On resume, restore has no saved state.
+#
+# Root cause (lock): omarchy-system-lock turns off the keyboard in a background
+# subshell, bypassing hypridle's idle tracking. The keyboard only restores after
+# entering the password, not when the lock screen wakes.
 #
 # Fix:
 # 1. Add 'save' command to omarchy-brightness-keyboard (saves brightness
 #    without changing it)
-# 2. Call 'save' from omarchy-system-lock in LOCK_ONLY mode (before suspend)
+# 2. Replace 'off' with 'save' in omarchy-system-lock so keyboard stays lit
+#    on lock screen, and brightness is saved for suspend/resume restore
+# 3. Add 'save' in LOCK_ONLY path (before suspend)
 #
 # See: https://github.com/basecamp/omarchy/pull/5839
 
@@ -50,7 +54,7 @@ elif [[ $direction == "save" ]]; then\
     fi
 fi
 
-# --- Patch 2: Save brightness in LOCK_ONLY mode in omarchy-system-lock ---
+# --- Patch 2: Replace 'off' with 'save' and add LOCK_ONLY save ---
 
 if [[ ! -f "$LOCK" ]]; then
     echo "ERROR: $LOCK not found" >&2
@@ -60,8 +64,10 @@ fi
 if grep -q 'omarchy-brightness-keyboard save' "$LOCK"; then
     echo "[lock] Already patched."
 else
-    # Replace the closing 'fi' of the LOCK_ONLY block with an else branch.
-    # Match the specific pattern at the end of the file.
+    # Replace 'off' with 'save' so keyboard stays lit on lock screen.
+    sed -i 's/omarchy-brightness-keyboard off/omarchy-brightness-keyboard save/' "$LOCK"
+
+    # Add else branch to save brightness in LOCK_ONLY mode (before suspend).
     sed -i '/OMARCHY_LOCK_ONLY/,$ {
         /^fi$/c\else\
   omarchy-brightness-keyboard save\
