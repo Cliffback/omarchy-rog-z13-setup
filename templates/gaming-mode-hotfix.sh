@@ -5,7 +5,7 @@
 # ============================================================================
 set -euo pipefail
 
-VERSION="1.4.0"
+VERSION="1.5.0"
 
 info(){ echo "[*] $*"; }
 warn(){ echo "[!] $*"; }
@@ -42,6 +42,7 @@ Fixes applied:
   4. Install pacman hook for surviving package updates
   5. Patch switch-to-gaming with gaming session sentinel file
   6. Remap gaming mode to side button (XF86Launch3) — toggle in/out
+  7. Prefer external display in gamescope (clamshell / docked)
 
 Optional (disabled by default):
   HDR session override - Enable with: SKIP_HDR_FIX=false ./gaming-mode-hotfix.sh
@@ -457,6 +458,39 @@ KEYBIND_MONITOR_SCRIPT
 fi
 
 # --------------------------------------------------------------------------
+# FIX 7: Prefer external display in gamescope
+# --------------------------------------------------------------------------
+# WHY: gamescope-session-plus defaults to OUTPUT_CONNECTOR=*,eDP-1 which
+#       prefers external displays over internal. Our phase 3 config
+#       overrides this to OUTPUT_CONNECTOR=eDP-1 (internal only), which
+#       means gamescope ignores external displays even when docked or
+#       lid-closed. Changing to *,eDP-1 restores the default behavior:
+#       use external if available, fall back to internal.
+# --------------------------------------------------------------------------
+if ! $CHECK_ONLY; then
+  info "FIX 7: Configuring gamescope to prefer external display..."
+  if [[ -f "$GAMESCOPE_ENV" ]]; then
+    if grep -q '^OUTPUT_CONNECTOR=\*,eDP-1' "$GAMESCOPE_ENV" 2>/dev/null; then
+      info "  OUTPUT_CONNECTOR already set to *,eDP-1"
+    elif grep -q '^OUTPUT_CONNECTOR=eDP-1' "$GAMESCOPE_ENV" 2>/dev/null; then
+      sed -i 's/^OUTPUT_CONNECTOR=eDP-1/OUTPUT_CONNECTOR=*,eDP-1/' "$GAMESCOPE_ENV"
+      info "  Changed OUTPUT_CONNECTOR: eDP-1 → *,eDP-1 (prefer external)"
+      ((++FIXES_APPLIED))
+    elif grep -q '^OUTPUT_CONNECTOR=' "$GAMESCOPE_ENV" 2>/dev/null; then
+      info "  OUTPUT_CONNECTOR has custom value (not patching)"
+    else
+      echo "OUTPUT_CONNECTOR=*,eDP-1" >> "$GAMESCOPE_ENV"
+      info "  Added OUTPUT_CONNECTOR=*,eDP-1"
+      ((++FIXES_APPLIED))
+    fi
+  else
+    warn "  Gamescope session config not found: $GAMESCOPE_ENV"
+    warn "  (This is normal if you haven't booted into Gaming Mode yet)"
+  fi
+  echo ""
+fi
+
+# --------------------------------------------------------------------------
 # Disable HDR in Heroic (when SKIP_HDR_FIX=true)
 # --------------------------------------------------------------------------
 # WHY: The ROG Flow Z13's panel only has ~500 nits peak brightness, which
@@ -612,6 +646,16 @@ if [[ -f "$KEYBIND_MONITOR" ]]; then
   fi
 fi
 
+# Check gamescope external display preference
+if [[ -f "$GAMESCOPE_ENV" ]]; then
+  if grep -q '^OUTPUT_CONNECTOR=\*,eDP-1' "$GAMESCOPE_ENV" 2>/dev/null; then
+    info "  [OK] Gamescope prefers external display (*,eDP-1)"
+  elif grep -q '^OUTPUT_CONNECTOR=eDP-1' "$GAMESCOPE_ENV" 2>/dev/null; then
+    warn "  [WARN] Gamescope locked to internal display (eDP-1 only)"
+    verify_ok=false
+  fi
+fi
+
 # Check HDR session override (only if HDR fix is enabled)
 if ! $SKIP_HDR_FIX; then
   if [[ -f "$HOME/.config/gamescope-session-plus/sessions.d/steam" ]]; then
@@ -658,6 +702,7 @@ echo "    3. Configure refresh rates for ROG Flow Z13 180Hz panel"
 echo "    4. Install pacman hook (auto-fixes after package updates)"
 echo "    5. Patch switch-to-gaming with session sentinel"
 echo "    6. Remap gaming mode to side button (XF86Launch3 toggle)"
+echo "    7. Prefer external display in gamescope (clamshell / docked)"
 if ! $SKIP_HDR_FIX; then
   echo ""
   echo "  Optional:"
