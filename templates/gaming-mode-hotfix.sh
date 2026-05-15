@@ -5,7 +5,7 @@
 # ============================================================================
 set -euo pipefail
 
-VERSION="1.3.3"
+VERSION="1.4.0"
 
 info(){ echo "[*] $*"; }
 warn(){ echo "[!] $*"; }
@@ -41,6 +41,7 @@ Fixes applied:
   3. Configure refresh rates for ROG Flow Z13 180Hz panel
   4. Install pacman hook for surviving package updates
   5. Patch switch-to-gaming with gaming session sentinel file
+  6. Remap gaming mode to side button (XF86Launch3) — toggle in/out
 
 Optional (disabled by default):
   HDR session override - Enable with: SKIP_HDR_FIX=false ./gaming-mode-hotfix.sh
@@ -330,6 +331,132 @@ if ! $CHECK_ONLY; then
 fi
 
 # --------------------------------------------------------------------------
+# FIX 6: Remap gaming mode to side button (XF86Launch3)
+# --------------------------------------------------------------------------
+# WHY: The Super_shift_S installer binds Super+Shift+S to gaming mode, but
+#       on the Z13 Fn+F6 emits Super+Shift+S at firmware level (screenshot
+#       key). We remap gaming mode to the side button (XF86Launch3 / Armory
+#       Crate key) instead, so Super+Shift+S stays as screenshot.
+#       We also patch gaming-keybind-monitor to detect KEY_PROG3 (the evdev
+#       code for XF86Launch3) so the same side button exits gamescope back
+#       to the desktop — making it a toggle.
+# --------------------------------------------------------------------------
+GAMING_MODE_CONF="$HOME/.config/hypr/gaming-mode.conf"
+KEYBIND_MONITOR="/usr/local/bin/gaming-keybind-monitor"
+
+if ! $CHECK_ONLY; then
+  info "FIX 6: Remapping gaming mode to side button (XF86Launch3)..."
+
+  # 6a: Patch gaming-mode.conf to use XF86Launch3 instead of Super+Shift+S
+  if [[ -f "$GAMING_MODE_CONF" ]]; then
+    if grep -q 'XF86Launch3' "$GAMING_MODE_CONF" 2>/dev/null; then
+      info "  gaming-mode.conf already uses XF86Launch3"
+    elif grep -q 'SUPER SHIFT, S' "$GAMING_MODE_CONF" 2>/dev/null; then
+      sed -i 's/SUPER SHIFT, S/, XF86Launch3/' "$GAMING_MODE_CONF"
+      info "  Remapped gaming-mode.conf: Super+Shift+S → XF86Launch3"
+      ((++FIXES_APPLIED))
+    else
+      warn "  gaming-mode.conf has unexpected binding (not patching)"
+    fi
+  else
+    warn "  gaming-mode.conf not found (Gaming Mode not installed yet?)"
+  fi
+
+  # 6b: Replace gaming-keybind-monitor to only detect KEY_PROG3 (side button)
+  #     Removes the old Super+Shift+R detection entirely.
+  if [[ -f "$KEYBIND_MONITOR" ]]; then
+    if grep -q 'KEY_PROG3' "$KEYBIND_MONITOR" 2>/dev/null && ! grep -q 'KEY_R' "$KEYBIND_MONITOR" 2>/dev/null; then
+      info "  gaming-keybind-monitor already using KEY_PROG3 only"
+    else
+      sudo tee "$KEYBIND_MONITOR" > /dev/null << 'KEYBIND_MONITOR_SCRIPT'
+#!/usr/bin/env python3
+import sys
+import subprocess
+import time
+import syslog
+
+def log(msg, error=False):
+    print(msg, file=sys.stderr if error else sys.stdout)
+    syslog.syslog(syslog.LOG_ERR if error else syslog.LOG_INFO, msg)
+
+syslog.openlog("gaming-keybind-monitor", syslog.LOG_PID)
+
+try:
+    import evdev
+    from evdev import ecodes
+except ImportError:
+    log("FATAL: python-evdev not installed", error=True)
+    sys.exit(1)
+
+def find_devices():
+    devices = []
+    devices_checked = 0
+    permission_errors = 0
+    for path in evdev.list_devices():
+        devices_checked += 1
+        try:
+            device = evdev.InputDevice(path)
+            caps = device.capabilities()
+            if ecodes.EV_KEY in caps:
+                keys = caps[ecodes.EV_KEY]
+                if ecodes.KEY_PROG3 in keys:
+                    devices.append(device)
+        except PermissionError:
+            permission_errors += 1
+        except Exception:
+            continue
+    if permission_errors > 0 and not devices:
+        log(f"FATAL: Permission denied on {permission_errors}/{devices_checked} input devices.", error=True)
+    return devices
+
+def monitor_devices(devices):
+    from selectors import DefaultSelector, EVENT_READ
+    selector = DefaultSelector()
+    for dev in devices:
+        selector.register(dev, EVENT_READ)
+    log(f"Monitoring {len(devices)} device(s) for XF86Launch3 (side button)...")
+    try:
+        while True:
+            for key, mask in selector.select():
+                device = key.fileobj
+                try:
+                    for event in device.read():
+                        if event.type != ecodes.EV_KEY:
+                            continue
+                        if event.code == ecodes.KEY_PROG3 and event.value == 1:
+                            log("XF86Launch3 (side button) detected! Switching to desktop...")
+                            subprocess.run(['/usr/local/bin/switch-to-desktop'])
+                            return
+                except Exception as e:
+                    log(f"Read error: {e}", error=True)
+                    continue
+    except KeyboardInterrupt:
+        pass
+    finally:
+        selector.close()
+
+def main():
+    time.sleep(2)
+    devices = find_devices()
+    if not devices:
+        log("FATAL: No devices with KEY_PROG3 found!", error=True)
+        sys.exit(1)
+    monitor_devices(devices)
+
+if __name__ == '__main__':
+    main()
+KEYBIND_MONITOR_SCRIPT
+      sudo chmod +x "$KEYBIND_MONITOR"
+      info "  Replaced gaming-keybind-monitor (KEY_PROG3 only, removed Super+Shift+R)"
+      ((++FIXES_APPLIED))
+    fi
+  else
+    warn "  gaming-keybind-monitor not found (Gaming Mode not installed yet?)"
+  fi
+  echo ""
+fi
+
+# --------------------------------------------------------------------------
 # Disable HDR in Heroic (when SKIP_HDR_FIX=true)
 # --------------------------------------------------------------------------
 # WHY: The ROG Flow Z13's panel only has ~500 nits peak brightness, which
@@ -464,6 +591,27 @@ if [[ -f "$SWITCH_GAMING" ]]; then
   fi
 fi
 
+# Check gaming mode side button remap
+if [[ -f "$GAMING_MODE_CONF" ]]; then
+  if grep -q 'XF86Launch3' "$GAMING_MODE_CONF" 2>/dev/null; then
+    info "  [OK] gaming-mode.conf uses XF86Launch3 (side button)"
+  else
+    warn "  [WARN] gaming-mode.conf not using XF86Launch3"
+    verify_ok=false
+  fi
+fi
+if [[ -f "$KEYBIND_MONITOR" ]]; then
+  if grep -q 'KEY_PROG3' "$KEYBIND_MONITOR" 2>/dev/null && ! grep -q 'KEY_R' "$KEYBIND_MONITOR" 2>/dev/null; then
+    info "  [OK] gaming-keybind-monitor uses KEY_PROG3 only (side button)"
+  elif grep -q 'KEY_PROG3' "$KEYBIND_MONITOR" 2>/dev/null; then
+    warn "  [WARN] gaming-keybind-monitor has KEY_PROG3 but still has legacy KEY_R"
+    verify_ok=false
+  else
+    warn "  [WARN] gaming-keybind-monitor missing KEY_PROG3 detection"
+    verify_ok=false
+  fi
+fi
+
 # Check HDR session override (only if HDR fix is enabled)
 if ! $SKIP_HDR_FIX; then
   if [[ -f "$HOME/.config/gamescope-session-plus/sessions.d/steam" ]]; then
@@ -509,6 +657,7 @@ echo "    2. Disable competing session desktop files (plasma, gnome, kde)"
 echo "    3. Configure refresh rates for ROG Flow Z13 180Hz panel"
 echo "    4. Install pacman hook (auto-fixes after package updates)"
 echo "    5. Patch switch-to-gaming with session sentinel"
+echo "    6. Remap gaming mode to side button (XF86Launch3 toggle)"
 if ! $SKIP_HDR_FIX; then
   echo ""
   echo "  Optional:"

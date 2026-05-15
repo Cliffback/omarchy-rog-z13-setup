@@ -4,7 +4,7 @@
 
 | Key | Keysym / Handler | Action |
 |-----|-------------------|--------|
-| **Side button** | `XF86Launch3` | Gaming mode (switch to gamescope/Steam) |
+| **Side button** | `XF86Launch3` | Toggle gaming mode (enter from Hyprland, exit from gamescope) |
 | **Fn+F5** (Armory Crate) | asusd (ACPI, no keysym) | Cycles power profile: Quiet → Balanced → Performance |
 | **Fn+F6** (Screenshot) | `Super+Shift+S` (firmware) | Screenshot (`omarchy-capture-screenshot`) |
 | **Fn+F11** (Kbd backlight) | `XF86KbdLightOnOff` | Cycle keyboard backlight (handled by omarchy default) |
@@ -43,7 +43,7 @@ fan curves and CPU boost behavior (EPP). The Z13's cooling sustains ~70-75W max.
 | `balanced` | Moderate | Moderate (BalancePower) | ~30-50W |
 | `performance` | Aggressive | Full boost (Performance) | ~70-75W (thermal limit) |
 
-### TDP Power Menu (Super+A)
+### TDP Power Menu (Super+Shift+Q)
 
 The TDP menu (`~/.local/bin/rog-quick.sh`) caps the APU power limit below the
 firmware default. This is the only way to set a specific wattage — profiles only
