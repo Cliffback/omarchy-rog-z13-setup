@@ -10,6 +10,10 @@ LYCHEE_PKG="lycheeslicer"
 LYCHEE_BIN="/opt/LycheeSlicer/lycheeslicer"
 LYCHEE_LAUNCHER="$HOME/.local/bin/lychee-scaled"
 LYCHEE_DESKTOP="$HOME/.local/share/applications/lycheeslicer.desktop"
+LYCHEE_MIME_XML="$HOME/.local/share/mime/packages/lychee-slicer.xml"
+LYCHEE_MIME_TYPE="application/x-lychee-slicer"
+LYCHEE_MIME_ICON_SRC="/usr/share/icons/hicolor/512x512/apps/lycheeslicer.png"
+LYCHEE_MIME_ICON_DST="$HOME/.local/share/icons/hicolor/512x512/mimetypes/application-x-lychee-slicer.png"
 
 phase14_check() {
     is_pkg_installed "$LYCHEE_PKG" \
@@ -17,7 +21,9 @@ phase14_check() {
         && grep -q 'force-device-scale-factor' "$LYCHEE_LAUNCHER" 2>/dev/null \
         && grep -q '0.8' "$LYCHEE_LAUNCHER" 2>/dev/null \
         && [[ -f "$LYCHEE_DESKTOP" ]] \
-        && grep -q 'lychee-scaled' "$LYCHEE_DESKTOP" 2>/dev/null
+        && grep -q 'lychee-scaled' "$LYCHEE_DESKTOP" 2>/dev/null \
+        && [[ -f "$LYCHEE_MIME_XML" ]] \
+        && [[ -f "$LYCHEE_MIME_ICON_DST" ]]
 }
 
 phase14_run() {
@@ -83,7 +89,7 @@ Type=Application
 Icon=lycheeslicer
 StartupWMClass=LycheeSlicer
 Comment=Lychee Slicer
-MimeType=x-scheme-handler/lycheeslicer;
+MimeType=x-scheme-handler/lycheeslicer;${LYCHEE_MIME_TYPE};
 Categories=Utility;
 EOF
     success "Desktop entry created at $LYCHEE_DESKTOP"
@@ -91,4 +97,42 @@ EOF
     # Refresh desktop database so app launchers pick up the override
     run_cmd update-desktop-database "$HOME/.local/share/applications" 2>/dev/null
     success "Lychee Slicer installed and DPI scaling configured."
+
+    # Register .lys MIME type so file managers recognise Lychee project files
+    info "Registering .lys file association..."
+    mkdir -p "$(dirname "$LYCHEE_MIME_XML")"
+    run_cmd tee "$LYCHEE_MIME_XML" > /dev/null << 'MIMEXML'
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-lychee-slicer">
+    <comment>Lychee Slicer Project</comment>
+    <magic priority="90">
+      <match type="string" value='{"version":' offset="16"/>
+    </magic>
+    <glob pattern="*.lys" weight="80"/>
+  </mime-type>
+</mime-info>
+MIMEXML
+    run_cmd update-mime-database "$HOME/.local/share/mime"
+
+    # Copy the app icon as the MIME type icon so .lys files show the Lychee logo
+    if [[ -f "$LYCHEE_MIME_ICON_SRC" ]]; then
+        local size
+        for size in 48 64 128 256 512; do
+            local dst_dir="$HOME/.local/share/icons/hicolor/${size}x${size}/mimetypes"
+            mkdir -p "$dst_dir"
+            if [[ "$size" -eq 512 ]]; then
+                run_cmd cp "$LYCHEE_MIME_ICON_SRC" "$dst_dir/application-x-lychee-slicer.png"
+            else
+                run_cmd magick "$LYCHEE_MIME_ICON_SRC" -resize "${size}x${size}" "$dst_dir/application-x-lychee-slicer.png"
+            fi
+        done
+        run_cmd gtk-update-icon-cache -f "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
+    else
+        warn "Lychee app icon not found at $LYCHEE_MIME_ICON_SRC — skipping MIME icon."
+    fi
+
+    # Set Lychee Slicer as the default app for .lys files
+    run_cmd xdg-mime default lycheeslicer.desktop "$LYCHEE_MIME_TYPE"
+    success ".lys files now associated with Lychee Slicer."
 }
