@@ -17,7 +17,9 @@ phase3_check() {
         && [[ -f /etc/modprobe.d/mt7925e.conf ]] \
         && is_pkg_installed alsa-utils \
         && [[ ! -f ~/.config/wireplumber/wireplumber.conf.d/alsa-soft-mixer.conf ]] \
-        && [[ -f ~/.config/wireplumber/wireplumber.conf.d/hdmi-audio-autoactivate.conf ]]
+        && [[ -f ~/.config/wireplumber/wireplumber.conf.d/hdmi-audio-autoactivate.conf ]] \
+        && [[ -f ~/.local/bin/omarchy-powerprofiles-set-debounced ]] \
+        && grep -q 'debounced' /etc/udev/rules.d/99-power-profile.rules 2>/dev/null
 }
 
 phase3_run() {
@@ -128,6 +130,26 @@ phase3_run() {
         success "Speaker amp initialized."
     else
         warn "ALC294 codec not found — skipping mixer init"
+    fi
+
+    # Power profile debounce: The Z13 generates spurious power_supply events
+    # from AC0 and ucsi-source-psy-USBC000:001, causing repeated profile sets,
+    # asusd fan curve rewrites (momentary fan stops), and notification spam.
+    # Override Omarchy's udev rule with a debounced wrapper.
+    local debounce_script="$HOME/.local/bin/omarchy-powerprofiles-set-debounced"
+    local debounce_rule="/etc/udev/rules.d/99-power-profile.rules"
+    if [[ ! -f "$debounce_script" ]] || ! grep -q 'DEBOUNCE_SECS' "$debounce_script" 2>/dev/null; then
+        info "Installing debounced power profile switcher..."
+        mkdir -p "$HOME/.local/bin"
+        cp "$SCRIPT_DIR/templates/omarchy-powerprofiles-set-debounced" "$debounce_script"
+        chmod +x "$debounce_script"
+        success "Debounce script installed."
+    fi
+    if [[ ! -f "$debounce_rule" ]] || ! grep -q 'debounced' "$debounce_rule" 2>/dev/null; then
+        info "Installing debounced udev rule (overrides Omarchy default)..."
+        run_sudo cp "$SCRIPT_DIR/templates/99-power-profile.rules" "$debounce_rule"
+        run_sudo udevadm control --reload-rules
+        success "Debounced udev rule installed."
     fi
 
     # HDMI audio: Enable auto-profile for AMD HDMI controller

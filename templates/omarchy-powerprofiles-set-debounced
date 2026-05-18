@@ -1,0 +1,22 @@
+#!/bin/bash
+# Debounced wrapper around omarchy-powerprofiles-set.
+# The ROG Flow Z13 generates spurious power_supply change events from both
+# AC0 (proprietary charger) and ucsi-source-psy-USBC000:001 (USB-C UCSI
+# controller). Without debouncing, each event triggers a full profile set →
+# asusd fan curve rewrite → momentary fan stop. This wrapper ignores events
+# that arrive within DEBOUNCE_SECS of the last successful run.
+
+DEBOUNCE_SECS=30
+STAMP="/tmp/.omarchy-power-profile-last-run"
+
+if [[ -f "$STAMP" ]]; then
+    last=$(cat "$STAMP" 2>/dev/null)
+    now=$(date +%s)
+    elapsed=$(( now - last ))
+    if (( elapsed < DEBOUNCE_SECS )); then
+        exit 0
+    fi
+fi
+
+date +%s > "$STAMP"
+exec "$HOME/.local/share/omarchy/bin/omarchy-powerprofiles-set" "$@"

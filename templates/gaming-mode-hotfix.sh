@@ -5,7 +5,7 @@
 # ============================================================================
 set -euo pipefail
 
-VERSION="1.5.0"
+VERSION="1.6.0"
 
 info(){ echo "[*] $*"; }
 warn(){ echo "[!] $*"; }
@@ -43,6 +43,7 @@ Fixes applied:
   5. Patch switch-to-gaming with gaming session sentinel file
   6. Remap gaming mode to side button (XF86Launch3) — toggle in/out
   7. Prefer external display in gamescope (clamshell / docked)
+  8. Replace powerprofilesctl with asusctl (fixes profile conflicts)
 
 Optional (disabled by default):
   HDR session override - Enable with: SKIP_HDR_FIX=false ./gaming-mode-hotfix.sh
@@ -491,6 +492,42 @@ if ! $CHECK_ONLY; then
 fi
 
 # --------------------------------------------------------------------------
+# FIX 8: Replace powerprofilesctl with asusctl in gamescope wrapper
+# --------------------------------------------------------------------------
+# WHY: power-profiles-daemon conflicts with asusd — both write to
+#       /sys/firmware/acpi/platform_profile, causing the profile to
+#       flip-flop (visible as repeated notifications without user input).
+#       Since asusd is the sole profile manager on ASUS hardware, the
+#       gamescope wrapper should use asusctl instead of powerprofilesctl.
+# --------------------------------------------------------------------------
+GAMESCOPE_WRAPPER="/usr/local/bin/gamescope-session-nm-wrapper"
+
+if ! $CHECK_ONLY; then
+  info "FIX 8: Replacing powerprofilesctl with asusctl in gamescope wrapper..."
+  if [[ -f "$GAMESCOPE_WRAPPER" ]]; then
+    if grep -q 'powerprofilesctl' "$GAMESCOPE_WRAPPER" 2>/dev/null; then
+      # Replace powerprofilesctl set performance → asusctl profile set Performance
+      sudo sed -i 's|powerprofilesctl set performance|asusctl profile set Performance|g' "$GAMESCOPE_WRAPPER"
+      # Replace powerprofilesctl set balanced → asusctl profile set Balanced
+      sudo sed -i 's|powerprofilesctl set balanced|asusctl profile set Balanced|g' "$GAMESCOPE_WRAPPER"
+      # Remove the "if command -v powerprofilesctl" guard — use asusctl directly
+      sudo sed -i 's|if command -v powerprofilesctl &>/dev/null; then|if command -v asusctl \&>/dev/null; then|g' "$GAMESCOPE_WRAPPER"
+      info "  Replaced powerprofilesctl → asusctl profile set"
+      ((++FIXES_APPLIED))
+    else
+      if grep -q 'asusctl profile set' "$GAMESCOPE_WRAPPER" 2>/dev/null; then
+        info "  Already using asusctl"
+      else
+        info "  No powerprofilesctl calls found (nothing to patch)"
+      fi
+    fi
+  else
+    warn "  gamescope-session-nm-wrapper not found (Gaming Mode not installed yet?)"
+  fi
+  echo ""
+fi
+
+# --------------------------------------------------------------------------
 # Disable HDR in Heroic (when SKIP_HDR_FIX=true)
 # --------------------------------------------------------------------------
 # WHY: The ROG Flow Z13's panel only has ~500 nits peak brightness, which
@@ -656,6 +693,16 @@ if [[ -f "$GAMESCOPE_ENV" ]]; then
   fi
 fi
 
+# Check gamescope wrapper uses asusctl (not powerprofilesctl)
+if [[ -f "$GAMESCOPE_WRAPPER" ]]; then
+  if grep -q 'powerprofilesctl' "$GAMESCOPE_WRAPPER" 2>/dev/null; then
+    warn "  [WARN] gamescope wrapper still uses powerprofilesctl"
+    verify_ok=false
+  elif grep -q 'asusctl profile set' "$GAMESCOPE_WRAPPER" 2>/dev/null; then
+    info "  [OK] gamescope wrapper uses asusctl"
+  fi
+fi
+
 # Check HDR session override (only if HDR fix is enabled)
 if ! $SKIP_HDR_FIX; then
   if [[ -f "$HOME/.config/gamescope-session-plus/sessions.d/steam" ]]; then
@@ -703,6 +750,7 @@ echo "    4. Install pacman hook (auto-fixes after package updates)"
 echo "    5. Patch switch-to-gaming with session sentinel"
 echo "    6. Remap gaming mode to side button (XF86Launch3 toggle)"
 echo "    7. Prefer external display in gamescope (clamshell / docked)"
+echo "    8. Replace powerprofilesctl with asusctl (fixes profile conflicts)"
 if ! $SKIP_HDR_FIX; then
   echo ""
   echo "  Optional:"
