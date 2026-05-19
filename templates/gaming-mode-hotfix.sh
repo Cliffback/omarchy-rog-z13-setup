@@ -512,6 +512,9 @@ if ! $CHECK_ONLY; then
       sudo sed -i 's|powerprofilesctl set balanced|asusctl profile set Balanced|g' "$GAMESCOPE_WRAPPER"
       # Remove the "if command -v powerprofilesctl" guard — use asusctl directly
       sudo sed -i 's|if command -v powerprofilesctl &>/dev/null; then|if command -v asusctl \&>/dev/null; then|g' "$GAMESCOPE_WRAPPER"
+      # Fix stale comments to reflect asusctl usage
+      sudo sed -i 's|power profile to performance (if power-profiles-daemon is available)|power profile to performance (via asusctl/asusd)|g' "$GAMESCOPE_WRAPPER"
+      sudo sed -i 's|Restore power profile to balanced|Restore power profile to balanced (via asusctl/asusd)|g' "$GAMESCOPE_WRAPPER"
       info "  Replaced powerprofilesctl → asusctl profile set"
       ((++FIXES_APPLIED))
     else
