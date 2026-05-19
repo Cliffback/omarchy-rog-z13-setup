@@ -15,7 +15,8 @@ phase15_check() {
         && grep -q 'GDK_DPI_SCALE' "$ORCA_LAUNCHER" 2>/dev/null \
         && grep -q '0.8' "$ORCA_LAUNCHER" 2>/dev/null \
         && [[ -f "$ORCA_DESKTOP" ]] \
-        && grep -q 'orca-scaled' "$ORCA_DESKTOP" 2>/dev/null
+        && grep -q 'orca-scaled' "$ORCA_DESKTOP" 2>/dev/null \
+        && grep -q 'x-scheme-handler/bambustudio' "$ORCA_DESKTOP" 2>/dev/null
 }
 
 phase15_run() {
@@ -74,11 +75,16 @@ Type=Application
 PrefersNonDefaultGPU=true
 X-KDE-RunOnDiscreteGpu=true
 Categories=Utility;
-MimeType=model/stl;application/vnd.ms-3mfdocument;application/prs.wavefront-obj;application/x-amf;
+MimeType=model/stl;application/vnd.ms-3mfdocument;application/prs.wavefront-obj;application/x-amf;x-scheme-handler/bambustudio;x-scheme-handler/bambustudioopen;
 EOF
     success "Desktop entry created at $ORCA_DESKTOP"
 
     # Refresh desktop database so app launchers pick up the override
     run_cmd update-desktop-database "$HOME/.local/share/applications" 2>/dev/null
+
+    # Register as default handler for BambuStudio URI schemes (MakerWorld "Open in BambuStudio")
+    run_cmd xdg-mime default Orca-BambuStudio.desktop x-scheme-handler/bambustudio
+    run_cmd xdg-mime default Orca-BambuStudio.desktop x-scheme-handler/bambustudioopen
+
     success "Orca Bambu Studio installed and DPI scaling configured."
 }

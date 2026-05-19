@@ -126,7 +126,7 @@ Installs Lychee Slicer from AUR and applies a DPI scaling fix. Lychee's Electron
 
 **Phase 15 - Orca Bambu Studio (optional)**
 
-Installs Orca Bambu Studio from AUR and applies a DPI scaling fix. Orca's wxWidgets UI is oversized on Wayland; a launcher wrapper sets `GDK_DPI_SCALE=0.8` to compensate. Creates a desktop entry that shadows the default one.
+Installs Orca Bambu Studio from AUR and applies a DPI scaling fix. Orca's wxWidgets UI is oversized on Wayland; a launcher wrapper sets `GDK_DPI_SCALE=0.8` to compensate. Creates a desktop entry that shadows the default one. Also registers as the handler for `bambustudio://` and `bambustudioopen://` URI schemes so MakerWorld's "Open in BambuStudio" button launches Orca.
 
 ## Custom Hyprland keybindings
 
