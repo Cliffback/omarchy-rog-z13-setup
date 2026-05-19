@@ -18,8 +18,11 @@ phase3_check() {
         && is_pkg_installed alsa-utils \
         && [[ ! -f ~/.config/wireplumber/wireplumber.conf.d/alsa-soft-mixer.conf ]] \
         && [[ -f ~/.config/wireplumber/wireplumber.conf.d/hdmi-audio-autoactivate.conf ]] \
-        && [[ -f ~/.local/bin/omarchy-powerprofiles-set-debounced ]] \
-        && grep -q 'debounced' /etc/udev/rules.d/99-power-profile.rules 2>/dev/null
+        && [[ -f ~/.local/share/omarchy/bin/omarchy-powerprofiles-set-debounced ]] \
+        && ! grep -q '__HOME__' ~/.local/share/omarchy/bin/omarchy-powerprofiles-set-debounced 2>/dev/null \
+        && grep -q 'debounced' /etc/udev/rules.d/99-power-profile.rules 2>/dev/null \
+        && ! grep -q '__HOME__' /etc/udev/rules.d/99-power-profile.rules 2>/dev/null \
+        && [[ -f ~/.config/omarchy/hooks/post-update.d/z13-power-profile-debounce-hook.sh ]]
 }
 
 phase3_run() {
@@ -135,21 +138,34 @@ phase3_run() {
     # Power profile debounce: The Z13 generates spurious power_supply events
     # from AC0 and ucsi-source-psy-USBC000:001, causing repeated profile sets,
     # asusd fan curve rewrites (momentary fan stops), and notification spam.
-    # Override Omarchy's udev rule with a debounced wrapper.
-    local debounce_script="$HOME/.local/bin/omarchy-powerprofiles-set-debounced"
+    # Override Omarchy's udev rule with a debounced wrapper, and install a
+    # post-update hook to re-apply if Omarchy overwrites the rule.
+    local debounce_script="$HOME/.local/share/omarchy/bin/omarchy-powerprofiles-set-debounced"
     local debounce_rule="/etc/udev/rules.d/99-power-profile.rules"
-    if [[ ! -f "$debounce_script" ]] || ! grep -q 'DEBOUNCE_SECS' "$debounce_script" 2>/dev/null; then
+    local debounce_hook="$HOME/.config/omarchy/hooks/post-update.d/z13-power-profile-debounce.sh"
+    if [[ ! -f "$debounce_script" ]] || grep -q '__HOME__' "$debounce_script" 2>/dev/null; then
         info "Installing debounced power profile switcher..."
         mkdir -p "$HOME/.local/bin"
-        cp "$SCRIPT_DIR/templates/omarchy-powerprofiles-set-debounced" "$debounce_script"
+        sed "s|__HOME__|$HOME|g" "$SCRIPT_DIR/templates/omarchy-powerprofiles-set-debounced" > "$debounce_script"
         chmod +x "$debounce_script"
         success "Debounce script installed."
     fi
     if [[ ! -f "$debounce_rule" ]] || ! grep -q 'debounced' "$debounce_rule" 2>/dev/null; then
         info "Installing debounced udev rule (overrides Omarchy default)..."
-        run_sudo cp "$SCRIPT_DIR/templates/99-power-profile.rules" "$debounce_rule"
+        local tmpfile
+        tmpfile=$(mktemp)
+        sed "s|__HOME__|$HOME|g" "$SCRIPT_DIR/templates/99-power-profile.rules" > "$tmpfile"
+        run_sudo cp "$tmpfile" "$debounce_rule"
+        rm -f "$tmpfile"
         run_sudo udevadm control --reload-rules
         success "Debounced udev rule installed."
+    fi
+    if [[ ! -f "$debounce_hook" ]]; then
+        info "Installing post-update hook (survives Omarchy updates)..."
+        mkdir -p "$(dirname "$debounce_hook")"
+        cp "$SCRIPT_DIR/templates/z13-power-profile-debounce-hook.sh" "$debounce_hook"
+        chmod +x "$debounce_hook"
+        success "Post-update hook installed."
     fi
 
     # HDMI audio: Enable auto-profile for AMD HDMI controller
