@@ -1,13 +1,78 @@
 #!/bin/bash
 # Debounced wrapper around omarchy-powerprofiles-set.
 # The ROG Flow Z13 generates spurious power_supply change events from both
-# AC0 (proprietary charger) and ucsi-source-psy-USBC000:001 (USB-C UCSI
-# controller). Without debouncing, each event triggers a full profile set →
-# asusd fan curve rewrite → momentary fan stop.
+# AC0 (proprietary charger) and ucsi-source-psy-USBC000:001/002 (USB-C UCSI
+# controller). Without debouncing, each event triggers a full profile set ->
+# asusd fan curve rewrite -> momentary fan stop.
 #
-# This wrapper sleeps briefly to let events settle, then calls the original.
-# systemd-run's unit name (omarchy-power-profile) ensures only one instance
-# runs at a time — concurrent events are naturally deduplicated.
+# This wrapper uses flock for concurrent-event deduplication, checks AC state
+# idempotently (skips if profile already matches), and only calls the original
+# script when the state has actually changed.
 
-sleep 3
-exec "__HOME__/.local/share/omarchy/bin/omarchy-powerprofiles-set" "$@"
+LOCKFILE="/run/user/${UID}/omarchy-powerprofiles.lock"
+STATEFILE="/run/user/${UID}/omarchy-powerprofiles.state"
+ORIG_SCRIPT="__HOME__/.local/share/omarchy/bin/omarchy-powerprofiles-set"
+
+mkdir -p "$(dirname "$LOCKFILE")"
+mkdir -p "$(dirname "$STATEFILE")"
+
+# Acquire an exclusive lock with a 5-second timeout.  If another instance is
+# already running, this blocks until it finishes (or times out), then we
+# re-check idempotency and exit early if the work is already done.
+exec 200>"$LOCKFILE"
+if ! flock -w 5 200; then
+    # Another instance is hung; silently exit to avoid udev error noise.
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# 1. Determine desired action from AC state (same logic as original script)
+# ---------------------------------------------------------------------------
+action="battery"
+for ps in /sys/class/power_supply/*; do
+    [[ -r "$ps/online" && -r "$ps/type" ]] || continue
+    type=$(cat "$ps/type")
+    [[ "$type" == "Mains" || "$type" == "USB" ]] || continue
+    if [[ $(cat "$ps/online") == "1" ]]; then
+        action="ac"
+        break
+    fi
+done
+
+# ---------------------------------------------------------------------------
+# 2. Idempotency: skip if AC state and resulting profile are unchanged
+# ---------------------------------------------------------------------------
+last_action=""
+last_profile=""
+if [[ -r "$STATEFILE" ]]; then
+    read -r last_action last_profile < "$STATEFILE" 2>/dev/null || true
+fi
+
+mapfile -t profiles < <(powerprofilesctl list 2>/dev/null | awk '/^\s*[* ]\s*[a-zA-Z0-9\-]+:$/ { gsub(/^[*[:space:]]+|:$/,""); print }')
+
+target_profile=""
+case "$action" in
+    ac)
+        if [[ " ${profiles[*]} " == *" performance "* ]]; then
+            target_profile="performance"
+        else
+            target_profile="balanced"
+        fi
+        ;;
+    battery)
+        target_profile="balanced"
+        ;;
+esac
+
+if [[ "$action" == "$last_action" && "$target_profile" == "$last_profile" ]]; then
+    # Nothing changed — skip the powerprofilesctl call entirely to avoid
+    # asusd re-evaluating EPP and rewriting fan curves on every event.
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Run the original script and persist state on success
+# ---------------------------------------------------------------------------
+if "$ORIG_SCRIPT" "$action"; then
+    echo "$action $target_profile" > "$STATEFILE"
+fi

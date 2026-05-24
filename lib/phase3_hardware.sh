@@ -20,9 +20,13 @@ phase3_check() {
         && [[ -f ~/.config/wireplumber/wireplumber.conf.d/hdmi-audio-autoactivate.conf ]] \
         && [[ -f ~/.local/share/omarchy/bin/omarchy-powerprofiles-set-debounced ]] \
         && ! grep -q '__HOME__' ~/.local/share/omarchy/bin/omarchy-powerprofiles-set-debounced 2>/dev/null \
+        && ! grep -q 'sleep 3' ~/.local/share/omarchy/bin/omarchy-powerprofiles-set-debounced 2>/dev/null \
+        && [[ -f /etc/udev/rules.d/99-power-profile.rules ]] \
         && grep -q 'debounced' /etc/udev/rules.d/99-power-profile.rules 2>/dev/null \
         && ! grep -q '__HOME__' /etc/udev/rules.d/99-power-profile.rules 2>/dev/null \
-        && [[ -f ~/.config/omarchy/hooks/post-update.d/z13-power-profile-debounce-hook.sh ]]
+        && ! grep '^SUBSYSTEM' /etc/udev/rules.d/99-power-profile.rules 2>/dev/null | grep -q 'unit=omarchy-power-profile' \
+        && [[ -f ~/.config/omarchy/hooks/post-update.d/z13-power-profile-debounce-hook.sh ]] \
+        && grep -q '\-\-unit=omarchy-power-profile' ~/.config/omarchy/hooks/post-update.d/z13-power-profile-debounce-hook.sh 2>/dev/null
 }
 
 phase3_run() {
@@ -136,21 +140,35 @@ phase3_run() {
     fi
 
     # Power profile debounce: The Z13 generates spurious power_supply events
-    # from AC0 and ucsi-source-psy-USBC000:001, causing repeated profile sets,
-    # asusd fan curve rewrites (momentary fan stops), and notification spam.
-    # Override Omarchy's udev rule with a debounced wrapper, and install a
-    # post-update hook to re-apply if Omarchy overwrites the rule.
+    # from AC0 and ucsi-source-psy-USBC000:001/002, causing repeated profile
+    # sets, asusd fan curve rewrites (momentary fan stops), and notification
+    # spam. Override Omarchy's udev rule with a debounced wrapper, and install
+    # a post-update hook to re-apply if Omarchy overwrites the rule.
+    #
+    # v2 fix (2025-05-24): removed fixed --unit name from systemd-run (caused
+    # boot-time collisions) and added flock + idempotency to the wrapper script.
     local debounce_script="$HOME/.local/share/omarchy/bin/omarchy-powerprofiles-set-debounced"
     local debounce_rule="/etc/udev/rules.d/99-power-profile.rules"
-    local debounce_hook="$HOME/.config/omarchy/hooks/post-update.d/z13-power-profile-debounce.sh"
-    if [[ ! -f "$debounce_script" ]] || grep -q '__HOME__' "$debounce_script" 2>/dev/null; then
+    local debounce_hook="$HOME/.config/omarchy/hooks/post-update.d/z13-power-profile-debounce-hook.sh"
+
+    # Reinstall script if missing, has template placeholders, or is the old v1
+    # version that used a naive "sleep 3" instead of flock + idempotency.
+    if [[ ! -f "$debounce_script" ]] \
+        || grep -q '__HOME__' "$debounce_script" 2>/dev/null \
+        || grep -q 'sleep 3' "$debounce_script" 2>/dev/null; then
         info "Installing debounced power profile switcher..."
         mkdir -p "$HOME/.local/bin"
         sed "s|__HOME__|$HOME|g" "$SCRIPT_DIR/templates/omarchy-powerprofiles-set-debounced" > "$debounce_script"
         chmod +x "$debounce_script"
         success "Debounce script installed."
     fi
-    if [[ ! -f "$debounce_rule" ]] || ! grep -q 'debounced' "$debounce_rule" 2>/dev/null; then
+
+    # Reinstall udev rule if missing, not debounced, has placeholders, or still
+    # uses the fixed --unit name that causes boot-time collisions.
+    if [[ ! -f "$debounce_rule" ]] \
+        || ! grep -q 'debounced' "$debounce_rule" 2>/dev/null \
+        || grep -q '__HOME__' "$debounce_rule" 2>/dev/null \
+        || grep '^SUBSYSTEM' "$debounce_rule" 2>/dev/null | grep -q 'unit=omarchy-power-profile'; then
         info "Installing debounced udev rule (overrides Omarchy default)..."
         local tmpfile
         tmpfile=$(mktemp)
@@ -160,7 +178,11 @@ phase3_run() {
         run_sudo udevadm control --reload-rules
         success "Debounced udev rule installed."
     fi
-    if [[ ! -f "$debounce_hook" ]]; then
+
+    # Reinstall post-update hook if missing or is the old v1 version that didn't
+    # strip the fixed --unit name.
+    if [[ ! -f "$debounce_hook" ]] \
+        || ! grep -q '\-\-unit=omarchy-power-profile' "$debounce_hook" 2>/dev/null; then
         info "Installing post-update hook (survives Omarchy updates)..."
         mkdir -p "$(dirname "$debounce_hook")"
         cp "$SCRIPT_DIR/templates/z13-power-profile-debounce-hook.sh" "$debounce_hook"
