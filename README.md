@@ -28,7 +28,7 @@ In dry-run mode all prompts are auto-answered yes and commands are printed inste
 
 ## What it does
 
-The script runs sixteen phases in order:
+The script runs seventeen phases in order:
 
 **Phase 0 - System update**
 
@@ -128,6 +128,10 @@ Installs Lychee Slicer from AUR and applies a DPI scaling fix. Lychee's Electron
 
 Installs Orca Bambu Studio from AUR and applies a DPI scaling fix. Orca's wxWidgets UI is oversized on Wayland; a launcher wrapper sets `GDK_DPI_SCALE=0.8` to compensate. Creates a desktop entry that shadows the default one. Also registers as the handler for `bambustudio://` and `bambustudioopen://` URI schemes so MakerWorld's "Open in BambuStudio" button launches Orca.
 
+**Phase 16 - Bambu Studio (optional)**
+
+Installs Bambu Studio AppImage from AUR and applies a DPI scaling fix. Bambu Studio's wxWidgets UI is oversized on Wayland; a launcher wrapper sets `GDK_DPI_SCALE=0.8` to compensate. Creates a desktop entry that shadows the default one. No MIME registration needed — it is already handled by the system desktop entry.
+
 ## Custom Hyprland keybindings
 
 Phase 4 adds the following keybindings to your Hyprland config:
@@ -162,6 +166,7 @@ lib/
   phase13_hibernate_wake.sh    Hibernate wake fix (GPIO workaround)
   phase14_lychee_scaling.sh    Lychee Slicer DPI scaling fix
   phase15_orca_scaling.sh      Orca Bambu Studio DPI scaling fix
+  phase16_bambu_scaling.sh     Bambu Studio DPI scaling fix
 templates/
   hyprland-z13.conf       Hyprland config block appended in Phase 4
   rog-profile-notify.sh   Platform profile change notification script

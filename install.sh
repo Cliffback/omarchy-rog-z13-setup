@@ -28,6 +28,7 @@ source "$SCRIPT_DIR/lib/phase12_audio_routing.sh"
 source "$SCRIPT_DIR/lib/phase13_hibernate_wake.sh"
 source "$SCRIPT_DIR/lib/phase14_lychee_scaling.sh"
 source "$SCRIPT_DIR/lib/phase15_orca_scaling.sh"
+source "$SCRIPT_DIR/lib/phase16_bambu_scaling.sh"
 
 # Track state
 NEEDS_REBOOT=0
@@ -114,6 +115,7 @@ run_phase 12 "Audio Sink Routing" phase12_check phase12_run || true
 run_phase 13 "Hibernate Wake Fix (optional)" phase13_check phase13_run || true
 run_phase 14 "Lychee Slicer (optional)" phase14_check phase14_run || true
 run_phase 15 "Orca Bambu Studio (optional)" phase15_check phase15_run || true
+run_phase 16 "Bambu Studio (optional)" phase16_check phase16_run || true
 
 # ── Summary ──────────────────────────────────────────────────────────────
 
