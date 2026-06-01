@@ -201,6 +201,29 @@ fix_permissions() {
     success "Permissions fixed."
 }
 
+# ── Add Hyprland window rule for UE dialogs ──
+add_hyprland_windowrule() {
+    local HYPRLAND_CONF="${HOME}/.config/hypr/hyprland.conf"
+
+    if [[ ! -f "$HYPRLAND_CONF" ]]; then
+        info "Hyprland config not found — skipping window rule."
+        return 0
+    fi
+
+    if grep -q "class:\^(UnrealEditor)\$" "$HYPRLAND_CONF" 2>/dev/null; then
+        info "UE window rule already present in Hyprland config."
+        return 0
+    fi
+
+    info "Adding Hyprland window rule for UE dialogs..."
+    if [[ $DRY_RUN -eq 0 ]]; then
+        echo "" >> "$HYPRLAND_CONF"
+        echo "# Center Unreal Editor floating dialogs (settings, properties, etc.)" >> "$HYPRLAND_CONF"
+        echo "windowrule = center 1, class:^(UnrealEditor)$, floating:1" >> "$HYPRLAND_CONF"
+    fi
+    success "Window rule added to ${HYPRLAND_CONF}"
+}
+
 # ── Install icons ──
 install_icons() {
     local template_dir="$1"
@@ -288,9 +311,20 @@ fi
 export GDK_SCALE=1
 export QT_SCALE_FACTOR=1
 
+# UE resolves .uproject paths relative to the engine dir, not the shell's cwd.
+# Convert any relative .uproject paths to absolute so UE finds them correctly.
+UE_ARGS=()
+for arg in "$@"; do
+    if [[ "$arg" == *.uproject && ! "$arg" == /* ]]; then
+        UE_ARGS+=("$(pwd)/$arg")
+    else
+        UE_ARGS+=("$arg")
+    fi
+done
+
 EOF
     run_cmd cat >> "$launcher" << EOF
-exec "${engine_dir}/Engine/Binaries/Linux/UnrealEditor" "\$@"
+exec "${engine_dir}/Engine/Binaries/Linux/UnrealEditor" "\${UE_ARGS[@]}"
 EOF
 
     run_cmd chmod +x "$launcher"
@@ -510,6 +544,7 @@ main() {
     # Post-install setup
     fix_permissions "$selected_version"
     compile_fake_dpi
+    add_hyprland_windowrule
     install_icons "$TEMPLATES_DIR"
     install_mime "$TEMPLATES_DIR"
     create_launcher "$selected_version"
