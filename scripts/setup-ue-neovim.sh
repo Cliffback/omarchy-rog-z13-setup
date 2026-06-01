@@ -2,10 +2,10 @@
 set -euo pipefail
 
 # =============================================================================
-# setup-ue-neovim.sh — Optional Neovim configuration for Unreal Engine dev
+# setup-ue-neovim.sh — Neovim configuration for Unreal Engine C++ development
 # =============================================================================
 # Usage:
-#   ./scripts/setup-ue-neovim.sh --engine-dir ~/UnrealEngine/5.5.4
+#   ./scripts/setup-ue-neovim.sh
 #   ./scripts/setup-ue-neovim.sh --help
 # =============================================================================
 
@@ -28,27 +28,23 @@ usage() {
     cat << EOF
 Usage: $(basename "$0") [OPTIONS]
 
-Configure Neovim for Unreal Engine C++ development.
+Configure Neovim for Unreal Engine C++ development on LazyVim.
 
 Options:
-  -e, --engine-dir <path>  Path to Unreal Engine install (e.g., ~/UnrealEngine/5.5.4)
-  -h, --help               Show this help message
+  -h, --help    Show this help message
+
+This script auto-detects your LazyVim setup and installs:
+  - UnrealEngine.nvim plugin (mbwilding/UnrealEngine.nvim)
+  - Auto-detection logic (reads .uproject → finds engine → sets clangd)
 
 Examples:
-  $(basename "$0") --engine-dir ~/UnrealEngine/5.5.4
+  $(basename "$0")
 EOF
 }
 
 # ── Parse args ──
-ENGINE_DIR=""
-
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        -e|--engine-dir)
-            ENGINE_DIR="${2:-}"
-            [[ -z "$ENGINE_DIR" ]] && { error "--engine-dir requires an argument."; usage; exit 1; }
-            shift 2
-            ;;
         -h|--help)
             usage
             exit 0
@@ -61,185 +57,232 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# ── Detect Neovim ──
+# ── Check Neovim ──
 if ! command -v nvim &>/dev/null; then
     error "Neovim not found. Install it first: sudo pacman -S neovim"
     exit 1
 fi
 
+NVIM_CONFIG="${HOME}/.config/nvim"
+if [[ ! -d "$NVIM_CONFIG" ]]; then
+    error "Neovim config not found at ${NVIM_CONFIG}"
+    exit 1
+fi
+
 info "Neovim found: $(command -v nvim)"
 
-# ── Resolve engine dir ──
-if [[ -z "$ENGINE_DIR" ]]; then
-    # Try to auto-detect
-    if [[ -d "${HOME}/UnrealEngine" ]]; then
-        local detected
-        detected=$(find "${HOME}/UnrealEngine" -maxdepth 1 -mindepth 1 -type d | head -n 1)
-        if [[ -n "$detected" ]]; then
-            read -rp "Use detected engine dir: ${detected}? [Y/n] " answer
-            if [[ ! "$answer" =~ ^[Nn]$ ]]; then
-                ENGINE_DIR="$detected"
-            fi
-        fi
-    fi
-fi
-
-if [[ -z "$ENGINE_DIR" ]]; then
-    read -rp "Path to Unreal Engine install (e.g., ~/UnrealEngine/5.5.4): " ENGINE_DIR
-fi
-
-ENGINE_DIR="$(realpath -m "${ENGINE_DIR/#\~/$HOME}")"
-
-if [[ ! -d "$ENGINE_DIR" ]]; then
-    error "Engine directory not found: ${ENGINE_DIR}"
+# ── Check LazyVim ──
+if [[ ! -f "${NVIM_CONFIG}/init.lua" ]] || ! grep -q "lazy.nvim" "${NVIM_CONFIG}/init.lua" 2>/dev/null; then
+    error "LazyVim not detected. This script only supports LazyVim setups."
     exit 1
 fi
 
-if [[ ! -f "${ENGINE_DIR}/Engine/Binaries/Linux/UnrealEditor" ]]; then
-    warn "UnrealEditor binary not found in ${ENGINE_DIR}"
-    read -rp "Continue anyway? [y/N] " answer
-    [[ "$answer" =~ ^[Yy]$ ]] || { info "Aborted."; exit 0; }
-fi
+info "LazyVim detected."
 
-info "Using engine directory: ${ENGINE_DIR}"
-
-# ── Detect plugin manager ──
-NVIM_CONFIG="${HOME}/.config/nvim"
-PLUGIN_MANAGER=""
-
-if [[ -f "${NVIM_CONFIG}/init.lua" ]]; then
-    if grep -q "lazy.nvim" "${NVIM_CONFIG}/init.lua" 2>/dev/null; then
-        PLUGIN_MANAGER="lazy"
-    elif grep -q "packer" "${NVIM_CONFIG}/init.lua" 2>/dev/null; then
-        PLUGIN_MANAGER="packer"
-    elif grep -q "vim-plug" "${NVIM_CONFIG}/init.lua" 2>/dev/null; then
-        PLUGIN_MANAGER="plug"
+# ── Backup function ──
+backup_file() {
+    local file="$1"
+    if [[ -f "$file" ]]; then
+        local backup="${file}.backup-$(date +%Y%m%d-%H%M%S)"
+        cp "$file" "$backup"
+        info "Backed up: ${backup}"
     fi
-elif [[ -f "${NVIM_CONFIG}/init.vim" ]]; then
-    if grep -q "vim-plug" "${NVIM_CONFIG}/init.vim" 2>/dev/null; then
-        PLUGIN_MANAGER="plug"
-    fi
-fi
+}
 
-if [[ -z "$PLUGIN_MANAGER" ]]; then
-    warn "Could not detect Neovim plugin manager."
-    info "Supported: lazy.nvim, packer.nvim, vim-plug"
-    echo ""
-    info "Manual setup instructions:"
-    echo "  1. Install one of the supported plugin managers"
-    echo "  2. Add a UE plugin (see recommendations below)"
-    echo "  3. Configure clangd with compile_commands.json from your project"
-    echo ""
-fi
+# ── Create config/ue.lua ──
+UE_CONFIG="${NVIM_CONFIG}/lua/config/ue.lua"
+info "Installing UE auto-detection config..."
+backup_file "$UE_CONFIG"
 
-# ── Recommend plugins ──
-echo ""
-echo "Recommended Unreal Engine Neovim plugins:"
-echo ""
-echo "  mbwilding/UnrealEngine.nvim  (full integration, 57⭐)"
-echo "    - Project parsing, LSP, build integration"
-echo "    - https://github.com/mbwilding/UnrealEngine.nvim"
-echo ""
-echo "  taku25/UnrealDev.nvim        (meta-suite, 40⭐)"
-echo "    - Combines UEP + UBT + UCM + ULG plugins"
-echo "    - https://github.com/taku25/UnrealDev.nvim"
-echo ""
-echo "  Individual plugins (taku25):"
-echo "    - UEP.nvim  : .uproject file parsing and navigation"
-echo "    - UBT.nvim  : UnrealBuildTool integration"
-echo "    - UCM.nvim  : C++ class generation (.h/.cpp pairs)"
-echo "    - ULG.nvim  : Real-time UE log viewer"
-echo ""
+mkdir -p "$(dirname "$UE_CONFIG")"
+cat > "$UE_CONFIG" << 'EOF'
+-- ~/.config/nvim/lua/config/ue.lua
+-- Unreal Engine auto-detection for Neovim
+-- Reads .uproject files to find engine version and configure LSP
 
-# ── clangd setup ──
-echo ""
-info "clangd configuration for Unreal Engine..."
+local M = {}
 
-# Find bundled clang
-CLANG_DIR=""
-for dir in "${ENGINE_DIR}/Engine/Extras/ThirdPartyNotUE/SDKs/HostLinux/*/x86_64-unknown-linux-gnu/bin" \
-           "${ENGINE_DIR}/Engine/Build/BatchFiles/Linux" \
-           "${ENGINE_DIR}/Engine/Extras/ThirdPartyNotUE/Clang" ; do
-    if [[ -d "$dir" ]]; then
-        CLANG_DIR="$dir"
-        break
-    fi
-done
+--- Find .uproject file in current file's parent directories
+function M.find_uproject()
+  local path = vim.fn.expand("%:p")
+  local dir = vim.fn.fnamemodify(path, ":h")
 
-if [[ -n "$CLANG_DIR" ]]; then
-    info "Found bundled toolchain: ${CLANG_DIR}"
-else
-    warn "Could not find bundled clang toolchain."
-    info "You may need to generate compile_commands.json from your project."
-fi
+  while dir ~= "/" do
+    local uproject = vim.fn.glob(dir .. "/*.uproject", false, true)
+    if #uproject > 0 then
+      return uproject[1], dir
+    end
+    dir = vim.fn.fnamemodify(dir, ":h")
+  end
 
-echo ""
-echo "For C++ LSP to work with UE, you need a compile_commands.json."
-echo "Generate it from your project:"
-echo ""
-echo "  1. Open your .uproject in Unreal Editor"
-echo "  2. Tools > Refresh Visual Studio Code Project"
-echo "     (this generates compile_commands.json)"
-echo ""
-echo "  OR run from your project root:"
-echo "    ${ENGINE_DIR}/Engine/Build/BatchFiles/Linux/Build.sh \\"
-echo "      YourProject Linux Development -Mode=GenerateClangDatabase"
-echo ""
+  return nil, nil
+end
 
-# ── Optional: create a project helper script ──
-UE_HELPER="${HOME}/.local/bin/ue-project-init"
-if [[ ! -f "$UE_HELPER" ]]; then
-    read -rp "Create ue-project-init helper script? [y/N] " answer
-    if [[ "$answer" =~ ^[Yy]$ ]]; then
-        mkdir -p "$(dirname "$UE_HELPER")"
-        cat > "$UE_HELPER" << EOF
-#!/bin/bash
-# Helper to initialize a new Unreal Engine project for Neovim/LSP
+--- Parse EngineAssociation from .uproject JSON
+function M.get_engine_version(uproject_path)
+  if not uproject_path then
+    return nil
+  end
 
-set -euo pipefail
+  local content = vim.fn.readfile(uproject_path)
+  if not content or #content == 0 then
+    return nil
+  end
 
-PROJECT_NAME="\${1:-}"
-if [[ -z "\$PROJECT_NAME" ]]; then
-    echo "Usage: ue-project-init <ProjectName>"
-    exit 1
-fi
+  local json_str = table.concat(content, "\n")
+  local version = json_str:match('"EngineAssociation"%s*:%s*"([0-9.]+)"')
 
-ENGINE_DIR="${ENGINE_DIR}"
-PROJECT_DIR="\$(pwd)/\$PROJECT_NAME"
+  return version
+end
 
-echo "Creating UE project: \$PROJECT_NAME"
-echo "Engine: \$ENGINE_DIR"
-echo "Project dir: \$PROJECT_DIR"
+--- Map engine version to install directory
+function M.get_engine_dir(version)
+  if not version then
+    return nil
+  end
 
-# Create project via UnrealEditor commandlet
-# Note: this requires the editor to run headlessly, which may not work on all setups
-# Alternative: create in editor, then run GenerateProjectFiles
+  -- Try exact version first (e.g., 5.5.4)
+  local exact = vim.fn.expand("~/UnrealEngine/" .. version)
+  if vim.fn.isdirectory(exact) == 1 then
+    return exact
+  end
 
-# After project creation, generate compile_commands.json:
-# \$ENGINE_DIR/Engine/Build/BatchFiles/Linux/Build.sh \\
-#   \$PROJECT_NAME Linux Development -Mode=GenerateClangDatabase
+  -- Try major.minor (e.g., 5.5 -> 5.5.4)
+  local major_minor = version:match("^([0-9]+\.[0-9]+)")
+  if major_minor then
+    local pattern = vim.fn.expand("~/UnrealEngine/" .. major_minor .. "*")
+    local matches = vim.fn.glob(pattern, false, true)
+    if #matches > 0 then
+      return matches[1]
+    end
+  end
+
+  return nil
+end
+
+--- Get compile_commands.json directory for detected project
+function M.get_compile_commands_dir()
+  local uproject, project_dir = M.find_uproject()
+  if not uproject then
+    return nil
+  end
+
+  local version = M.get_engine_version(uproject)
+  local engine_dir = M.get_engine_dir(version)
+
+  if not engine_dir then
+    vim.notify(
+      "UE: Could not find engine for version " .. (version or "unknown"),
+      vim.log.levels.WARN
+    )
+    return nil
+  end
+
+  -- compile_commands.json is generated in the engine dir
+  local compile_db = engine_dir .. "/compile_commands.json"
+
+  if vim.fn.filereadable(compile_db) == 0 then
+    vim.notify(
+      "UE: compile_commands.json not found.\n"
+        .. "Generate it with:\n"
+        .. "  cd " .. project_dir .. "\n"
+        .. "  make YourProjectEditor ARGS=\"-Mode=GenerateClangDatabase\"",
+      vim.log.levels.WARN
+    )
+    return nil
+  end
+
+  return engine_dir
+end
+
+return M
 EOF
-        chmod +x "$UE_HELPER"
-        success "Created: ${UE_HELPER}"
-    fi
-fi
+
+success "Created: ${UE_CONFIG}"
+
+# ── Create plugins/ue.lua ──
+UE_PLUGIN="${NVIM_CONFIG}/lua/plugins/ue.lua"
+info "Installing UE plugin spec..."
+backup_file "$UE_PLUGIN"
+
+mkdir -p "$(dirname "$UE_PLUGIN")"
+cat > "$UE_PLUGIN" << 'EOF'
+-- ~/.config/nvim/lua/plugins/ue.lua
+-- Unreal Engine Neovim integration for LazyVim
+-- Auto-detects UE projects and configures LSP
+
+return {
+  {
+    "mbwilding/UnrealEngine.nvim",
+    dependencies = {
+      "neovim/nvim-lspconfig",
+    },
+    ft = { "cpp", "h", "hpp" },
+    config = function()
+      local ok, ue = pcall(require, "config.ue")
+      if not ok then
+        vim.notify("UE: config.ue.lua not found", vim.log.levels.WARN)
+        return
+      end
+
+      local uproject = ue.find_uproject()
+      local version = ue.get_engine_version(uproject)
+      local engine_dir = ue.get_engine_dir(version)
+
+      require("UnrealEngine").setup({
+        engine_dir = engine_dir,
+      })
+    end,
+  },
+
+  -- Override clangd config for UE projects
+  {
+    "neovim/nvim-lspconfig",
+    opts = {
+      servers = {
+        clangd = {
+          -- Auto-detect compile_commands.json for UE projects
+          on_new_config = function(new_config, _)
+            local ok, ue = pcall(require, "config.ue")
+            if not ok then
+              return
+            end
+
+            local compile_dir = ue.get_compile_commands_dir()
+            if compile_dir then
+              -- Insert compile-commands-dir into cmd args
+              table.insert(new_config.cmd, 2, "--compile-commands-dir=" .. compile_dir)
+            end
+          end,
+        },
+      },
+    },
+  },
+}
+EOF
+
+success "Created: ${UE_PLUGIN}"
 
 # ── Summary ──
 echo ""
 echo -e "${BOLD}╔══════════════════════════════════════════════════╗${NC}"
-echo -e "${BOLD}║         Neovim UE Setup Instructions             ║${NC}"
+echo -e "${BOLD}║         Neovim UE Setup Complete                 ║${NC}"
 echo -e "${BOLD}╚══════════════════════════════════════════════════╝${NC}"
 echo ""
-success "Engine directory configured: ${ENGINE_DIR}"
+success "LazyVim configured for Unreal Engine development."
+echo ""
+info "What was installed:"
+echo "  ${UE_CONFIG}     - Auto-detect engine from .uproject files"
+echo "  ${UE_PLUGIN}  - UnrealEngine.nvim plugin + clangd integration"
 echo ""
 info "Next steps:"
-echo "  1. Install a UE Neovim plugin (see recommendations above)"
-if [[ -n "$PLUGIN_MANAGER" ]]; then
-    echo "     Detected plugin manager: ${PLUGIN_MANAGER}"
-fi
-echo "  2. Open a UE project in the editor"
-echo "  3. Generate compile_commands.json (Tools > Refresh VS Code Project)"
-echo "  4. Open the project in Neovim and enjoy LSP + UE integration"
+echo "  1. Open Neovim and run :Lazy to install UnrealEngine.nvim"
+echo "  2. Open any C++ file in your UE project"
+echo "  3. The plugin will auto-detect the engine and configure LSP"
+echo ""
+info "Generate compile_commands.json for your project:"
+echo "  cd /path/to/project"
+echo "  make ProjectNameEditor ARGS=\"-Mode=GenerateClangDatabase\""
 echo ""
 info "For help, visit: https://github.com/mbwilding/UnrealEngine.nvim"
 echo ""
