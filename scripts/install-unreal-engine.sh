@@ -210,7 +210,7 @@ add_hyprland_windowrule() {
         return 0
     fi
 
-    if grep -q "class:\^(UnrealEditor)\$" "$HYPRLAND_CONF" 2>/dev/null; then
+    if grep -q "match:class UnrealEditor" "$HYPRLAND_CONF" 2>/dev/null; then
         info "UE window rule already present in Hyprland config."
         return 0
     fi
@@ -218,8 +218,8 @@ add_hyprland_windowrule() {
     info "Adding Hyprland window rule for UE dialogs..."
     if [[ $DRY_RUN -eq 0 ]]; then
         echo "" >> "$HYPRLAND_CONF"
-        echo "# Center Unreal Editor floating dialogs (settings, properties, etc.)" >> "$HYPRLAND_CONF"
-        echo "windowrule = center 1, class:^(UnrealEditor)$, floating:1" >> "$HYPRLAND_CONF"
+        echo "# Center Unreal Editor windows (dialogs, settings, etc. spawn off-center on XWayland)" >> "$HYPRLAND_CONF"
+        echo "windowrule = center 1, match:class UnrealEditor" >> "$HYPRLAND_CONF"
     fi
     success "Window rule added to ${HYPRLAND_CONF}"
 }
