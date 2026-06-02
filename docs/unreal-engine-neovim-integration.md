@@ -318,7 +318,26 @@ cd ~/UnrealEngine/5.5.4/Engine/Plugins/Developer/NeovimSourceCodeAccess
 # Follow the plugin's build instructions (typically requires RunUAT)
 ```
 
-### 5. Generate LSP Cache (one-time per project)
+### 5. Enable Plugin Globally (auto-done by setup script)
+
+The `setup-ue-neovim.sh` script automatically patches the plugin's `.uplugin` descriptor to add `"EnabledByDefault": true`. This means:
+- The plugin loads for **all projects** on this machine
+- **No `.uproject` modification needed** — remove the `NeovimSourceCodeAccess` entry from your `.uproject` if you had it
+- Projects can still opt out by explicitly adding `"Enabled": false` to their `.uproject`
+
+If you need to do this manually:
+```bash
+python3 -c "
+import json
+with open('~/UnrealEngine/5.5.4/Engine/Plugins/Developer/NeovimSourceCodeAccess/NeovimSourceCodeAccess.uplugin', 'r') as f:
+    data = json.load(f)
+data['EnabledByDefault'] = True
+with open('~/UnrealEngine/5.5.4/Engine/Plugins/Developer/NeovimSourceCodeAccess/NeovimSourceCodeAccess.uplugin', 'w') as f:
+    json.dump(data, f, indent=4)
+"
+```
+
+### 6. Generate LSP Cache (one-time per project)
 
 In nvim, with your UE project open:
 ```vim

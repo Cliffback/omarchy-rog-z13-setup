@@ -284,6 +284,56 @@ else
     warn "Launcher not found at ${LAUNCHER}"
 fi
 
+# ── Enable NeovimSourceCodeAccess plugin globally ──
+enable_plugin_globally() {
+    local engine_path="${HOME}/UnrealEngine/5.5.4"
+    local uplugin="${engine_path}/Engine/Plugins/Developer/NeovimSourceCodeAccess/NeovimSourceCodeAccess.uplugin"
+
+    if [[ ! -f "$uplugin" ]]; then
+        warn "NeovimSourceCodeAccess plugin not found at ${uplugin}"
+        warn "Build and install it first from mbwilding/UnrealEngine.nvim, then re-run this script."
+        return 0
+    fi
+
+    # Check if EnabledByDefault is already set
+    if grep -q '"EnabledByDefault"' "$uplugin"; then
+        if grep -q '"EnabledByDefault": true' "$uplugin"; then
+            success "NeovimSourceCodeAccess already enabled by default globally."
+            return 0
+        fi
+        # Exists but false — flip to true
+        info "Updating EnabledByDefault to true..."
+        sed -i 's/"EnabledByDefault": false/"EnabledByDefault": true/' "$uplugin" || {
+            warn "Failed to patch .uplugin with sed."
+            return 0
+        }
+    else
+        # Add EnabledByDefault: true to the JSON
+        info "Adding EnabledByDefault: true to plugin descriptor..."
+        if command -v python3 &>/dev/null; then
+            python3 -c "
+import json
+with open('$uplugin', 'r') as f:
+    data = json.load(f)
+data['EnabledByDefault'] = True
+with open('$uplugin', 'w') as f:
+    json.dump(data, f, indent=4)
+" || {
+                warn "Failed to patch .uplugin with python3."
+                return 0
+            }
+        else
+            warn "python3 not found — cannot patch .uplugin. Install python and re-run."
+            return 0
+        fi
+    fi
+
+    success "NeovimSourceCodeAccess enabled by default for all UE projects on this machine."
+    info "No need to add it to .uproject files anymore."
+}
+
+enable_plugin_globally || true
+
 # ── Summary ──
 echo ""
 echo -e "${BOLD}╔══════════════════════════════════════════════════╗${NC}"
@@ -311,6 +361,10 @@ echo "  → Creates compile_commands.json and .clangd"
 echo ""
 info "Enable Neovim in UE:"
 echo "  Edit → Editor Preferences → Source Code → select 'Neovim'"
+echo ""
+info "Global plugin enable:"
+echo "  This script patched NeovimSourceCodeAccess.uplugin with EnabledByDefault: true"
+echo "  → No need to add the plugin to your .uproject files anymore"
 echo ""
 info "Troubleshooting:"
 echo "  - Files not opening in nvim: Launch UE FROM nvim, not manually"
