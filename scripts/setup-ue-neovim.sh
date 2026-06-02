@@ -334,6 +334,43 @@ with open('$uplugin', 'w') as f:
 
 enable_plugin_globally || true
 
+# ── Set Neovim as default source code editor in UE ──
+set_default_source_editor() {
+    local engine_path="${HOME}/UnrealEngine/5.5.4"
+    local base_editor_ini="${engine_path}/Engine/Config/BaseEditor.ini"
+
+    if [[ ! -f "$base_editor_ini" ]]; then
+        warn "BaseEditor.ini not found at ${base_editor_ini}"
+        warn "Unreal Engine may not be installed yet."
+        return 0
+    fi
+
+    # Check if section already exists
+    if grep -q '\[\/?Script\/SourceCodeAccess\.SourceCodeAccessSettings\]' "$base_editor_ini"; then
+        if grep -A1 '\[\/?Script\/SourceCodeAccess\.SourceCodeAccessSettings\]' "$base_editor_ini" | grep -q 'PreferredAccessor=NeovimSourceCodeAccess'; then
+            success "Neovim already set as default source code editor in BaseEditor.ini."
+            return 0
+        fi
+        # Section exists but points to something else — update it
+        info "Updating PreferredAccessor to NeovimSourceCodeAccess in BaseEditor.ini..."
+        sed -i '/PreferredAccessor=/c\PreferredAccessor=NeovimSourceCodeAccess' "$base_editor_ini" || {
+            warn "Failed to patch BaseEditor.ini with sed."
+            return 0
+        }
+    else
+        # Append new section
+        info "Adding SourceCodeAccessSettings section to BaseEditor.ini..."
+        echo "" >> "$base_editor_ini"
+        echo "[/Script/SourceCodeAccess.SourceCodeAccessSettings]" >> "$base_editor_ini"
+        echo "PreferredAccessor=NeovimSourceCodeAccess" >> "$base_editor_ini"
+    fi
+
+    success "Neovim set as default source code editor for all UE projects on this machine."
+    info "No need to change Edit → Editor Preferences → Source Code manually anymore."
+}
+
+set_default_source_editor || true
+
 # ── Summary ──
 echo ""
 echo -e "${BOLD}╔══════════════════════════════════════════════════╗${NC}"
@@ -359,12 +396,13 @@ info "Generate LSP cache (run once per project):"
 echo "  :UnrealEngine lsp"
 echo "  → Creates compile_commands.json and .clangd"
 echo ""
-info "Enable Neovim in UE:"
-echo "  Edit → Editor Preferences → Source Code → select 'Neovim'"
-echo ""
 info "Global plugin enable:"
 echo "  This script patched NeovimSourceCodeAccess.uplugin with EnabledByDefault: true"
 echo "  → No need to add the plugin to your .uproject files anymore"
+echo ""
+info "Default source code editor:"
+echo "  This script patched BaseEditor.ini with PreferredAccessor=NeovimSourceCodeAccess"
+echo "  → Neovim is already selected as the default editor, no manual preference change needed"
 echo ""
 info "Troubleshooting:"
 echo "  - Files not opening in nvim: Launch UE FROM nvim, not manually"

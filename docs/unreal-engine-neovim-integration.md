@@ -279,6 +279,18 @@ vim.api.nvim_create_autocmd("VimLeavePre", {
 })
 ```
 
+### Finding 10: Setting Neovim as default editor requires `BaseEditor.ini` patch
+
+**Problem**: Even with the plugin enabled, UE still defaults to "Visual Studio Code" or "Rider" as the active source code accessor. Manually changing Edit → Editor Preferences → Source Code → Neovim for every project is tedious and error-prone.
+
+**Solution**: Patch `Engine/Config/BaseEditor.ini` to set `PreferredAccessor=NeovimSourceCodeAccess`:
+```ini
+[/Script/SourceCodeAccess.SourceCodeAccessSettings]
+PreferredAccessor=NeovimSourceCodeAccess
+```
+
+This is engine-wide: all projects on this machine use Neovim by default. The `setup-ue-neovim.sh` script does this automatically.
+
 ## Setup Instructions
 
 ### 1. Install Unreal Engine
@@ -304,13 +316,7 @@ Run the setup script (requires LazyVim):
 
 This creates `~/.config/nvim/lua/plugins/ue.lua` with the full integration config.
 
-### 3. Enable Neovim in UE
-
-1. Open Unreal Editor
-2. Edit → Editor Preferences → Source Code
-3. Select **Neovim** from the dropdown
-
-### 4. Build the Official Plugin
+### 3. Build the Official Plugin
 
 The official plugin must be built from source:
 ```bash
@@ -318,26 +324,29 @@ cd ~/UnrealEngine/5.5.4/Engine/Plugins/Developer/NeovimSourceCodeAccess
 # Follow the plugin's build instructions (typically requires RunUAT)
 ```
 
-### 5. Enable Plugin Globally (auto-done by setup script)
+### 4. Auto-Configuration (done by setup script)
 
-The `setup-ue-neovim.sh` script automatically patches the plugin's `.uplugin` descriptor to add `"EnabledByDefault": true`. This means:
+The `setup-ue-neovim.sh` script automatically performs two engine-wide patches so you never need to manually configure UE per-project:
+
+**A) Enable Plugin Globally**
+Patches the plugin's `.uplugin` descriptor to add `"EnabledByDefault": true`:
 - The plugin loads for **all projects** on this machine
 - **No `.uproject` modification needed** — remove the `NeovimSourceCodeAccess` entry from your `.uproject` if you had it
 - Projects can still opt out by explicitly adding `"Enabled": false` to their `.uproject`
 
-If you need to do this manually:
-```bash
-python3 -c "
-import json
-with open('~/UnrealEngine/5.5.4/Engine/Plugins/Developer/NeovimSourceCodeAccess/NeovimSourceCodeAccess.uplugin', 'r') as f:
-    data = json.load(f)
-data['EnabledByDefault'] = True
-with open('~/UnrealEngine/5.5.4/Engine/Plugins/Developer/NeovimSourceCodeAccess/NeovimSourceCodeAccess.uplugin', 'w') as f:
-    json.dump(data, f, indent=4)
-"
+**B) Set Neovim as Default Source Code Editor**
+Patches `Engine/Config/BaseEditor.ini` to add:
+```ini
+[/Script/SourceCodeAccess.SourceCodeAccessSettings]
+PreferredAccessor=NeovimSourceCodeAccess
 ```
+- Neovim is pre-selected as the active source code accessor in UE
+- **No manual Edit → Editor Preferences → Source Code step needed**
+- Applies to all projects on this machine
 
-### 6. Generate LSP Cache (one-time per project)
+If you need to do either step manually, see the script source or run the commands by hand.
+
+### 5. Generate LSP Cache (one-time per project)
 
 In nvim, with your UE project open:
 ```vim
