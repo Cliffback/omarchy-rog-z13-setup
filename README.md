@@ -28,7 +28,7 @@ In dry-run mode all prompts are auto-answered yes and commands are printed inste
 
 ## What it does
 
-The script runs seventeen phases in order:
+The script runs eighteen phases in order:
 
 **Phase 0 - System update**
 
@@ -132,7 +132,19 @@ Installs Orca Bambu Studio from AUR and applies a DPI scaling fix. Orca's wxWidg
 
 Installs Bambu Studio AppImage from AUR and applies a DPI scaling fix. Bambu Studio's wxWidgets UI is oversized on Wayland; a launcher wrapper sets `GDK_DPI_SCALE=0.8` to compensate. Creates a desktop entry that shadows the default one. No MIME registration needed — it is already handled by the system desktop entry.
 
-## Unreal Engine + Neovim (optional, standalone scripts)
+**Phase 17 - Unreal Engine 5 (optional)**
+
+Installs Unreal Engine 5 binary releases with Wayland/X11 fixes, HiDPI scaling (`fake_dpi.so`), launcher aliases, desktop integration, and bidirectional Neovim support. Requires manually downloading a `Linux_Unreal_Engine_*.zip` from Epic first. After installation, optionally configures Neovim/LazyVim with the official `mbwilding/UnrealEngine.nvim` plugin for LSP, building, and bidirectional file opening between UE Editor and nvim.
+
+Features include:
+- Double-click a C++ class in UE → opens in your running nvim instance
+- `:UnrealEngine open` from nvim → launches UE for the current project
+- Auto-respawn: if nvim is closed, UE spawns a new instance automatically
+- Dead socket detection via `timeout 3` — UE never freezes
+- Smart `nvim` wrapper script handles any socket path (including random `v:servername` paths)
+- `setsid` detaches spawned terminals from UE's process tree so they survive
+
+For full details, see [`docs/unreal-engine-neovim-integration.md`](docs/unreal-engine-neovim-integration.md).
 
 Two standalone scripts provide a complete bidirectional integration between Unreal Engine 5 and Neovim for C++ development on the Z13:
 
@@ -184,6 +196,7 @@ lib/
   phase14_lychee_scaling.sh    Lychee Slicer DPI scaling fix
   phase15_orca_scaling.sh      Orca Bambu Studio DPI scaling fix
   phase16_bambu_scaling.sh     Bambu Studio DPI scaling fix
+  phase17_unreal_engine.sh     Unreal Engine 5 installer + Neovim integration
 templates/
   hyprland-z13.conf       Hyprland config block appended in Phase 4
   rog-profile-notify.sh   Platform profile change notification script
