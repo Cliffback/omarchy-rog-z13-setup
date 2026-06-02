@@ -438,6 +438,27 @@ If you see stale sockets in `/run/user/1000/`:
 rm /run/user/1000/nvim.*.0
 ```
 
+### P4V opens `.uproject` files as text instead of Unreal Editor
+
+**Problem**: Double-clicking a `.uproject` file in P4V opens it as plain text (JSON) instead of launching Unreal Editor.
+
+**Root cause**: `.uproject` files are JSON, so `xdg-mime` content sniffing returns `application/json`. P4V uses `xdg-open` which respects MIME types, while Nautilus uses extension-based matching and works fine.
+
+**Solution**: The installer script installs `perl-file-mimeinfo` and registers a magic rule that identifies `.uproject` files by their distinctive `{"FileVersion":` header (priority 80, higher than JSON). This ensures `xdg-mime query filetype` returns `application/x-uproject`.
+
+If you're still seeing this after installation:
+```bash
+# Verify perl-file-mimeinfo is installed
+which mimetype || sudo pacman -S perl-file-mimeinfo
+
+# Verify MIME type detection
+xdg-mime query filetype /path/to/your.uproject
+# Should return: application/x-uproject
+
+# If it still returns application/json, force the association:
+xdg-mime default unreal-engine-5.5.4.desktop application/x-uproject
+```
+
 The `VimLeavePre` autocmd should clean these up automatically. If nvim crashes, manual cleanup may be needed.
 
 ## Files in This Repo

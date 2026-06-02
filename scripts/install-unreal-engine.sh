@@ -250,6 +250,14 @@ install_mime() {
 
     info "Installing MIME type for .uproject files..."
 
+    # perl-file-mimeinfo provides the 'mimetype' command which xdg-mime prefers
+    # over 'file'. Without it, .uproject files (which are JSON) get sniffed as
+    # application/json and open in a text editor instead of UE.
+    if ! command -v mimetype &>/dev/null; then
+        info "Installing perl-file-mimeinfo (required for correct .uproject MIME detection)..."
+        run_cmd sudo pacman -S --needed --noconfirm perl-file-mimeinfo
+    fi
+
     run_cmd mkdir -p "$MIME_DIR"
     run_cmd cp "${template_dir}/unreal-engine.xml" "${MIME_DIR}/application-x-uproject.xml"
     run_cmd update-mime-database "${HOME}/.local/share/mime" 2>/dev/null || true
@@ -589,6 +597,11 @@ main() {
     install_mime "$TEMPLATES_DIR"
     create_launcher "$selected_version"
     create_desktop_entry "$selected_version"
+
+    # Set UE as the default handler for .uproject files
+    info "Setting Unreal Engine as default handler for .uproject files..."
+    run_cmd xdg-mime default "${DESKTOP_DIR}/unreal-engine-${selected_version}.desktop" "application/x-uproject"
+
     set_default_version "$selected_version"
     source_env_in_shell
     verify_install "$selected_version"

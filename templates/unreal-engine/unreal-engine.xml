@@ -3,6 +3,9 @@
 	<mime-type type="application/x-uproject">
 		<comment>Unreal Project</comment>
 		<generic-icon name="application-x-uproject"/>
+		<magic priority="80">
+			<match type="string" value='{"FileVersion":' offset="0"/>
+		</magic>
 		<glob pattern="*.uproject"/>
 	</mime-type>
 </mime-info>
