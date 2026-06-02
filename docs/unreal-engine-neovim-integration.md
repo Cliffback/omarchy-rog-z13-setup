@@ -326,7 +326,9 @@ cd ~/UnrealEngine/5.5.4/Engine/Plugins/Developer/NeovimSourceCodeAccess
 
 ### 4. Auto-Configuration (done by setup script)
 
-The `setup-ue-neovim.sh` script automatically performs two engine-wide patches so you never need to manually configure UE per-project:
+The `setup-ue-neovim.sh` script automatically performs two engine-wide patches so you never need to manually configure UE per-project.
+
+**Important:** Run this script **after** building and installing the official plugin (Step 3). If the plugin isn't on disk yet, the script will warn you and skip the patch — just re-run it after the plugin is installed.
 
 **A) Enable Plugin Globally**
 Patches the plugin's `.uplugin` descriptor to add `"EnabledByDefault": true`:

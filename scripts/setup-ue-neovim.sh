@@ -291,7 +291,12 @@ enable_plugin_globally() {
 
     if [[ ! -f "$uplugin" ]]; then
         warn "NeovimSourceCodeAccess plugin not found at ${uplugin}"
-        warn "Build and install it first from mbwilding/UnrealEngine.nvim, then re-run this script."
+        warn "This is expected if you haven't built the plugin from mbwilding/UnrealEngine.nvim yet."
+        warn "Build steps:"
+        warn "  1. cd ~/.local/share/nvim/lazy/UnrealEngine.nvim  (or where you cloned it)"
+        warn "  2. Follow the build instructions in the repo (typically RunUAT)"
+        warn "  3. Copy the built plugin to ${engine_path}/Engine/Plugins/Developer/"
+        warn "  4. Re-run this script: ./scripts/setup-ue-neovim.sh"
         return 0
     fi
 
@@ -403,6 +408,11 @@ echo ""
 info "Default source code editor:"
 echo "  This script patched BaseEditor.ini with PreferredAccessor=NeovimSourceCodeAccess"
 echo "  → Neovim is already selected as the default editor, no manual preference change needed"
+echo ""
+info "If the plugin was NOT found during this run:"
+echo "  Build it from mbwilding/UnrealEngine.nvim first, then re-run this script:"
+echo "    ./scripts/setup-ue-neovim.sh"
+echo "  (Both patches above will be applied on re-run once the plugin exists.)"
 echo ""
 info "Troubleshooting:"
 echo "  - Files not opening in nvim: Launch UE FROM nvim, not manually"
