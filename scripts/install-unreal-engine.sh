@@ -278,6 +278,37 @@ compile_fake_dpi() {
     success "Fake DPI library: ${out_file}"
 }
 
+# ── Install nvim wrapper for bidirectional UE <-> nvim integration ──
+install_nvim_wrapper() {
+    local wrapper_src="${TEMPLATES_DIR}/nvim-wrapper.sh"
+    local wrapper_dir="${BIN_DIR}/wrappers"
+    local wrapper_dst="${wrapper_dir}/nvim"
+
+    if [[ ! -f "$wrapper_src" ]]; then
+        warn "nvim-wrapper.sh not found in templates — skipping wrapper install."
+        return 1
+    fi
+
+    info "Installing nvim wrapper for UE integration..."
+    run_cmd mkdir -p "$wrapper_dir"
+    run_cmd cp "$wrapper_src" "$wrapper_dst"
+    run_cmd chmod +x "$wrapper_dst"
+
+    # Update PATH in .env so wrapper is available to UE
+    local env_file="${INSTALL_BASE}/.env"
+    if [[ -f "$env_file" ]]; then
+        if ! grep -qF "${wrapper_dir}" "$env_file" 2>/dev/null; then
+            info "Adding wrapper directory to PATH in ${env_file}..."
+            if [[ $DRY_RUN -eq 0 ]]; then
+                # Prepend wrapper dir to existing PATH line
+                sed -i "s|export PATH=\"|export PATH=\"${wrapper_dir}:|" "$env_file"
+            fi
+        fi
+    fi
+
+    success "nvim wrapper installed: ${wrapper_dst}"
+}
+
 # ── Create launcher ──
 create_launcher() {
     local version="$1"
@@ -310,6 +341,14 @@ fi
 
 export GDK_SCALE=1
 export QT_SCALE_FACTOR=1
+
+# Prepend nvim wrapper to PATH so UE uses our wrapper instead of the real nvim binary.
+# The wrapper handles dead socket detection and auto-respawn when opening files
+# from the UE editor into a running (or freshly spawned) nvim instance.
+WRAPPER_DIR="${HOME}/UnrealEngine/bin/wrappers"
+if [[ -d "$WRAPPER_DIR" ]]; then
+    export PATH="${WRAPPER_DIR}:${PATH}"
+fi
 
 # UE resolves .uproject paths relative to the engine dir, not the shell's cwd.
 # Convert any relative .uproject paths to absolute so UE finds them correctly.
@@ -544,6 +583,7 @@ main() {
     # Post-install setup
     fix_permissions "$selected_version"
     compile_fake_dpi
+    install_nvim_wrapper
     add_hyprland_windowrule
     install_icons "$TEMPLATES_DIR"
     install_mime "$TEMPLATES_DIR"
@@ -569,6 +609,9 @@ main() {
     echo ""
     info "Wayland fix is baked in: SDL_VIDEODRIVER=x11 is set automatically."
     info "HiDPI fix: LD_PRELOAD forces 144 DPI for consistent UI scaling."
+    echo ""
+    info "nvim wrapper installed at: ${BIN_DIR}/wrappers/nvim"
+    info "  Handles dead socket detection and auto-respawn for UE <-> nvim integration."
     echo ""
     info "The zip file remains in ${DOWNLOADS_DIR}/ — delete it manually when ready."
     echo ""

@@ -132,6 +132,23 @@ Installs Orca Bambu Studio from AUR and applies a DPI scaling fix. Orca's wxWidg
 
 Installs Bambu Studio AppImage from AUR and applies a DPI scaling fix. Bambu Studio's wxWidgets UI is oversized on Wayland; a launcher wrapper sets `GDK_DPI_SCALE=0.8` to compensate. Creates a desktop entry that shadows the default one. No MIME registration needed — it is already handled by the system desktop entry.
 
+## Unreal Engine + Neovim (optional, standalone scripts)
+
+Two standalone scripts provide a complete bidirectional integration between Unreal Engine 5 and Neovim for C++ development on the Z13:
+
+- **`scripts/install-unreal-engine.sh`** — Installs UE5 binary releases with Wayland/X11 fixes, HiDPI scaling (`fake_dpi.so`), launcher aliases, and desktop integration
+- **`scripts/setup-ue-neovim.sh`** — Configures LazyVim with the official `mbwilding/UnrealEngine.nvim` plugin for LSP, building, and bidirectional file opening
+
+Features include:
+- Double-click a C++ class in UE → opens in your running nvim instance
+- `:UnrealEngine open` from nvim → launches UE for the current project
+- Auto-respawn: if nvim is closed, UE spawns a new instance automatically
+- Dead socket detection via `timeout 3` — UE never freezes
+- Smart `nvim` wrapper script handles any socket path (including random `v:servername` paths)
+- `setsid` detaches spawned terminals from UE's process tree so they survive
+
+For full details, see [`docs/unreal-engine-neovim-integration.md`](docs/unreal-engine-neovim-integration.md).
+
 ## Custom Hyprland keybindings
 
 Phase 4 adds the following keybindings to your Hyprland config:
@@ -179,6 +196,16 @@ templates/
   99-thunderbolt-no-d3.rules  Thunderbolt dock udev rules for Phase 10
   controller-gaming-trigger.py   Gamepad combo listener for Phase 11
   controller-gaming-trigger.service  Systemd user service for Phase 11
+  unreal-engine/
+    nvim-wrapper.sh       Smart nvim wrapper for UE integration
+    fake_dpi.c            HiDPI interceptor for UE on HiDPI displays
+    *.png                 Application icons
+    unreal-engine.xml     MIME type for .uproject files
+scripts/
+  install-unreal-engine.sh    Standalone UE5 binary installer
+  setup-ue-neovim.sh          Neovim/LazyVim UE integration setup
+docs/
+  unreal-engine-neovim-integration.md  Full UE+nvim integration guide
 ```
 
 ## Disclaimer
