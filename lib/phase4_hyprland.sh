@@ -3,8 +3,11 @@
 
 HYPRLAND_CONF="$HOME/.config/hypr/hyprland.conf"
 
+SYSTEM_SLEEP_HOOK="/usr/lib/systemd/system-sleep/99-asus-z13-touchpad-reset"
+
 phase4_check() {
-    file_contains "$HYPRLAND_CONF" "wvkbd-deskintl"
+    file_contains "$HYPRLAND_CONF" "wvkbd-deskintl" \
+        && [[ -x "$SYSTEM_SLEEP_HOOK" ]]
 }
 
 phase4_run() {
@@ -48,5 +51,30 @@ phase4_run() {
             fi
         fi
         success "Monitor config updated."
+    fi
+
+    # Install systemd sleep hook to reset USB keyboard dock after resume.
+    # The AMD xHCI controller intermittently crashes during resume, causing
+    # the ELAN touchpad firmware to re-enumerate with corrupted multi-touch
+    # state (gestures require +1 finger). This forces a clean reinitialization.
+    info "Installing systemd sleep hook for touchpad resume fix..."
+    if [[ $DRY_RUN -eq 1 ]]; then
+        info "[DRY-RUN] would install $SYSTEM_SLEEP_HOOK"
+    else
+        run_sudo cp "$SCRIPT_DIR/templates/system-sleep-touchpad-reset.sh" "$SYSTEM_SLEEP_HOOK"
+        run_sudo chmod +x "$SYSTEM_SLEEP_HOOK"
+    fi
+    success "Sleep hook installed."
+
+    # Update hypridle after_sleep_cmd to include hyprctl reload as a safety net
+    local hypridle_conf="$HOME/.config/hypr/hypridle.conf"
+    if [[ -f "$hypridle_conf" ]]; then
+        info "Updating hypridle after_sleep_cmd to include hyprctl reload..."
+        if [[ $DRY_RUN -eq 1 ]]; then
+            info "[DRY-RUN] would update after_sleep_cmd in $hypridle_conf"
+        else
+            sed -i 's|after_sleep_cmd = sleep 1 && omarchy-system-wake|after_sleep_cmd = sleep 1 \&\& omarchy-system-wake \&\& hyprctl reload|' "$hypridle_conf"
+        fi
+        success "hypridle.conf updated."
     fi
 }
