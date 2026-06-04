@@ -5,16 +5,21 @@
 # controller). Without debouncing, each event triggers a full profile set ->
 # asusd fan curve rewrite -> momentary fan stop.
 #
-# This wrapper uses flock for concurrent-event deduplication, checks AC state
-# idempotently (skips if profile already matches), and only calls the original
-# script when the state has actually changed.
+# v3 fix (2025-06-04):
+# - Double-read AC state with a 200ms stability check to catch transient
+#   sysfs glitches from UCSI renegotiation or suspend/resume enumeration.
+# - 3-second cooldown after any actual powerprofilesctl call to suppress
+#   follow-up events that arrive while the system is still settling.
+# - flock-based concurrency deduplication and idempotency (v2) preserved.
 
 LOCKFILE="/run/user/${UID}/omarchy-powerprofiles.lock"
 STATEFILE="/run/user/${UID}/omarchy-powerprofiles.state"
+COOLDOWN_FILE="/run/user/${UID}/omarchy-powerprofiles.lastcall"
 ORIG_SCRIPT="__HOME__/.local/share/omarchy/bin/omarchy-powerprofiles-set"
 
 mkdir -p "$(dirname "$LOCKFILE")"
 mkdir -p "$(dirname "$STATEFILE")"
+mkdir -p "$(dirname "$COOLDOWN_FILE")"
 
 # Acquire an exclusive lock with a 5-second timeout.  If another instance is
 # already running, this blocks until it finishes (or times out), then we
@@ -26,18 +31,46 @@ if ! flock -w 5 200; then
 fi
 
 # ---------------------------------------------------------------------------
-# 1. Determine desired action from AC state (same logic as original script)
+# 0. Cooldown: skip if we changed the profile very recently
 # ---------------------------------------------------------------------------
-action="battery"
-for ps in /sys/class/power_supply/*; do
-    [[ -r "$ps/online" && -r "$ps/type" ]] || continue
-    type=$(cat "$ps/type")
-    [[ "$type" == "Mains" || "$type" == "USB" ]] || continue
-    if [[ $(cat "$ps/online") == "1" ]]; then
-        action="ac"
-        break
-    fi
-done
+now=$(date +%s)
+last_call=$(cat "$COOLDOWN_FILE" 2>/dev/null || echo 0)
+if (( now - last_call < 3 )); then
+    # Another event fired within 3s of the last actual change — likely a
+    # follow-up from the same physical transition.  Ignore it.
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# 1. AC state detection with stability check (double-read)
+# ---------------------------------------------------------------------------
+read_ac_state() {
+    local found=0
+    for ps in /sys/class/power_supply/*; do
+        [[ -r "$ps/online" && -r "$ps/type" ]] || continue
+        type=$(cat "$ps/type")
+        [[ "$type" == "Mains" || "$type" == "USB" ]] || continue
+        if [[ $(cat "$ps/online") == "1" ]]; then
+            found=1
+            break
+        fi
+    done
+    echo "$found"
+}
+
+ac_read1=$(read_ac_state)
+sleep 0.2
+ac_read2=$(read_ac_state)
+
+if [[ "$ac_read1" == "1" && "$ac_read2" == "1" ]]; then
+    action="ac"
+elif [[ "$ac_read1" == "0" && "$ac_read2" == "0" ]]; then
+    action="battery"
+else
+    # Unstable reading (transient UCSI / suspend-wake glitch).
+    # Don't act — a stable event will arrive shortly.
+    exit 0
+fi
 
 # ---------------------------------------------------------------------------
 # 2. Idempotency: skip if AC state and resulting profile are unchanged
@@ -71,8 +104,9 @@ if [[ "$action" == "$last_action" && "$target_profile" == "$last_profile" ]]; th
 fi
 
 # ---------------------------------------------------------------------------
-# 3. Run the original script and persist state on success
+# 3. Run the original script, persist state, and record cooldown
 # ---------------------------------------------------------------------------
 if "$ORIG_SCRIPT" "$action"; then
     echo "$action $target_profile" > "$STATEFILE"
+    date +%s > "$COOLDOWN_FILE"
 fi
