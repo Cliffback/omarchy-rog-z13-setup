@@ -5,38 +5,62 @@
 # controller). Without debouncing, each event triggers a full profile set ->
 # asusd fan curve rewrite -> momentary fan stop.
 #
-# v3 fix (2025-06-04):
-# - Double-read AC state with a 200ms stability check to catch transient
-#   sysfs glitches from UCSI renegotiation or suspend/resume enumeration.
-# - 3-second cooldown after any actual powerprofilesctl call to suppress
-#   follow-up events that arrive while the system is still settling.
-# - flock-based concurrency deduplication and idempotency (v2) preserved.
+# v4 fix (2025-06-18):
+# - Atomic mkdir sentinel (replaces flock): only one instance does work,
+#   all others exit immediately. flock was serializing instances, causing
+#   each queued event to re-evaluate independently and flip-flop.
+# - Double-read AC state with 1.0s stability check (was 0.2s) — catches
+#   longer transients during low-battery kernel enumeration.
+# - 10-second cooldown after any actual change (was 3s) — suppresses
+#   follow-up events that arrive 5-15s apart during UCSI settling.
+# - Idempotency preserved (v2/v3).
 
-LOCKFILE="/run/user/${UID}/omarchy-powerprofiles.lock"
 STATEFILE="/run/user/${UID}/omarchy-powerprofiles.state"
 COOLDOWN_FILE="/run/user/${UID}/omarchy-powerprofiles.lastcall"
+PROCESSING="/run/user/${UID}/omarchy-powerprofiles.processing"
 ORIG_SCRIPT="__HOME__/.local/share/omarchy/bin/omarchy-powerprofiles-set"
 
-mkdir -p "$(dirname "$LOCKFILE")"
 mkdir -p "$(dirname "$STATEFILE")"
 mkdir -p "$(dirname "$COOLDOWN_FILE")"
+mkdir -p "$(dirname "$PROCESSING")"
 
-# Acquire an exclusive lock with a 5-second timeout.  If another instance is
-# already running, this blocks until it finishes (or times out), then we
-# re-check idempotency and exit early if the work is already done.
-exec 200>"$LOCKFILE"
-if ! flock -w 5 200; then
-    # Another instance is hung; silently exit to avoid udev error noise.
-    exit 0
+# ---------------------------------------------------------------------------
+# Atomic deduplication: only one instance may proceed.
+# mkdir is atomic on all POSIX filesystems — if it succeeds, we are the
+# sole worker; if it fails, another instance is already running and we
+# exit immediately.  This avoids the flock queuing problem where N queued
+# instances would each re-evaluate state independently, causing a cascade
+# of profile flips.
+#
+# Stale sentinel cleanup: if a previous run crashed, the directory may be
+# left behind.  Remove it if it's older than 10 seconds, then try again.
+# ---------------------------------------------------------------------------
+if ! mkdir "$PROCESSING" 2>/dev/null; then
+    # Directory exists — check if it's stale (older than 10s).
+    if [[ -d "$PROCESSING" ]]; then
+        age=$(( $(date +%s) - $(stat -c %Y "$PROCESSING" 2>/dev/null || echo 0) ))
+        if (( age > 10 )); then
+            rmdir "$PROCESSING" 2>/dev/null
+            mkdir "$PROCESSING" 2>/dev/null || exit 0
+        else
+            exit 0
+        fi
+    else
+        exit 0
+    fi
 fi
+
+# Ensure cleanup always runs, even on error or early exit.
+cleanup() { rmdir "$PROCESSING" 2>/dev/null || true; }
+trap cleanup EXIT
 
 # ---------------------------------------------------------------------------
 # 0. Cooldown: skip if we changed the profile very recently
 # ---------------------------------------------------------------------------
 now=$(date +%s)
 last_call=$(cat "$COOLDOWN_FILE" 2>/dev/null || echo 0)
-if (( now - last_call < 3 )); then
-    # Another event fired within 3s of the last actual change — likely a
+if (( now - last_call < 10 )); then
+    # Another event fired within 10s of the last actual change — likely a
     # follow-up from the same physical transition.  Ignore it.
     exit 0
 fi
@@ -59,7 +83,7 @@ read_ac_state() {
 }
 
 ac_read1=$(read_ac_state)
-sleep 0.2
+sleep 1.0
 ac_read2=$(read_ac_state)
 
 if [[ "$ac_read1" == "1" && "$ac_read2" == "1" ]]; then
