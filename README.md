@@ -209,6 +209,11 @@ templates/
   99-thunderbolt-no-d3.rules  Thunderbolt dock udev rules for Phase 10
   controller-gaming-trigger.py   Gamepad combo listener for Phase 11
   controller-gaming-trigger.service  Systemd user service for Phase 11
+  99-power-profile.rules  Battery-keyed power-profile udev rule (Phase 3)
+  99-wifi-powersave.rules Battery-keyed Wi-Fi power-save udev rule (Phase 3)
+  omarchy-powerprofiles-set-debounced  Debounced profile switcher (Phase 3)
+  z13-wifi-powersave-auto.sh  Wi-Fi power-save wrapper (Phase 3)
+  z13-power-profile-debounce-hook.sh  Post-update hook re-applying both rules (Phase 3)
   unreal-engine/
     nvim-wrapper.sh       Smart nvim wrapper for UE integration
     fake_dpi.c            HiDPI interceptor for UE on HiDPI displays
@@ -217,8 +222,17 @@ templates/
 scripts/
   install-unreal-engine.sh    Standalone UE5 binary installer
   setup-ue-neovim.sh          Neovim/LazyVim UE integration setup
+  prep-quattro-upgrade.sh     Back up customizations before the Omarchy 4 upgrade
+  z13-power-validate.sh       Record power-profile signals across a charge cycle
+  scx-bench.sh                CPU scheduler benchmark harness
+  scx-ab-test.sh              EEVDF vs sched_ext A/B comparison
+  scx-sweep.sh                Scheduler config sweep
+  scx-latency.c               Wake-latency measurement tool
 docs/
   unreal-engine-neovim-integration.md  Full UE+nvim integration guide
+  z13-power-profile-churn-fix.md       AC0 flapping bug: cause, fix, validation
+  omarchy-quattro-upgrade-checklist.md Omarchy 4 upgrade plan
+  scx-sched-ext-evaluation.md          sched_ext evaluation (not adopted)
 ```
 
 ## Disclaimer
