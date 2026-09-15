@@ -1,0 +1,23 @@
+# Override Omarchy's default wifi-powersave udev rule.
+#
+# Omarchy's version keys on ATTR{type}=="Mains", ATTR{online}, which inherits
+# the ROG Flow Z13's AC0.online flapping: while the battery is actively
+# charging, AC0 flips 0 <-> 1 every 1-3 seconds, toggling Wi-Fi power save at
+# the same rate (101 times in 14 minutes). That churn is a plausible
+# contributor to the Wi-Fi instability documented in
+# docs/wifi-investigation-2026-03-08.md.
+#
+# Matching ATTR{status}=="Discharging" here does not work either: the udev
+# event fires before BAT0.status settles, so the rule can match the wrong
+# branch. Instead this single rule fires a script that reads the settled status
+# itself and applies the right mode.
+#
+# KERNEL=="BAT*" matches the kernel's system-battery names (BAT0, BAT1, ...) and
+# excludes peripheral batteries such as the Elan touchpad's
+# hid-0018:04F3:43C7.0008-battery-7.
+#
+# NOTE: No fixed --unit name — each udev event gets a unique auto-generated unit.
+# A fixed name causes collisions when BAT0 emits several uevents for one
+# transition (observed: two per replug), making every invocation after the first
+# fail with "unit already exists".
+SUBSYSTEM=="power_supply", KERNEL=="BAT*", ATTR{type}=="Battery", RUN+="/usr/bin/systemd-run --no-block --collect __HOME__/.local/bin/z13-wifi-powersave-auto"
