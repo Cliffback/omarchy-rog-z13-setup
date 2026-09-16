@@ -24,12 +24,21 @@ INTERNAL_DISABLE_FLAG="$HOME/.local/state/omarchy/toggles/hypr/internal-monitor-
 # edits there appear to do nothing. Everything it held now lives in z13.lua.
 DEAD_HYPRLAND_CONF="$HYPR_DIR/hyprland.conf"
 
-# Omarchy's clamshell helper re-applies the scale it reads from monitors.lua on
-# every hotplug. With a literal number there it would clobber the 2.0 scale set
-# in z13.lua, so the catch-all is left on "auto" for the compositor to resolve.
-monitors_scale_defers() {
+# Z13 default scale for the internal panel, used only when monitors.lua still
+# carries Omarchy's stock "auto". Omarchy's scaling keys (SUPER+SLASH and
+# SUPER+ALT+SLASH) rewrite omarchy_monitor_scale and reload, so a number here is
+# what makes them work; "auto" means PPI, which the keys then cannot express.
+Z13_SCALE_DEFAULT=1.6
+
+# Display config lives in Omarchy's own monitors.lua so the scaling keys drive
+# the internal panel: the keys rewrite omarchy_monitor_scale, and both the
+# catch-all and the eDP rule read that variable. z13.lua no longer pins any
+# monitor, because a per-output rule that omits scale does NOT inherit the
+# catch-all (Hyprland has no field-level merge) and would freeze the scale.
+monitors_configured() {
     [[ -f "$MONITORS_LUA" ]] \
-        && grep -q '^local omarchy_monitor_scale = "auto"$' "$MONITORS_LUA"
+        && grep -qE '^local omarchy_monitor_scale = [0-9]' "$MONITORS_LUA" \
+        && grep -qF 'output = "HDMI-A-1"' "$MONITORS_LUA"
 }
 
 phase4_check() {
@@ -39,7 +48,7 @@ phase4_check() {
         && [[ ! -e "$Z13_DOCK" ]] \
         && [[ ! -e "$INTERNAL_DISABLE_FLAG" ]] \
         && [[ ! -e "$DEAD_HYPRLAND_CONF" ]] \
-        && monitors_scale_defers \
+        && monitors_configured \
         && file_contains "$HYPRLAND_LUA" "$Z13_REQUIRE"
 }
 
@@ -66,30 +75,62 @@ add_z13_require() {
     ' "$HYPRLAND_LUA" > "$HYPRLAND_LUA.tmp" && mv "$HYPRLAND_LUA.tmp" "$HYPRLAND_LUA"
 }
 
-# Leave the monitor catch-all scale to the compositor, so Omarchy's clamshell
-# helper defers to the per-output scale in z13.lua instead of re-applying the
-# old 1.25 to the internal panel. GDK_SCALE is deliberately left alone: it is
-# global and would also scale XWayland apps on the 1.25 external display.
-set_monitors_scale_auto() {
+# Give the internal panel a concrete default scale, but only when monitors.lua
+# still has Omarchy's stock "auto" — a value the user picked with the scaling
+# keys is never clobbered. GDK_SCALE is left alone: Omarchy's scaling command
+# owns it (it rewrites omarchy_gdk_scale on every change).
+set_monitors_scale_default() {
     if [[ ! -f "$MONITORS_LUA" ]]; then
         warn "Monitor config not found at $MONITORS_LUA — skipping scale fix."
         return
     fi
 
-    if monitors_scale_defers; then
-        info "Monitor catch-all scale already defers to the compositor."
+    if grep -qE '^local omarchy_monitor_scale = [0-9]' "$MONITORS_LUA"; then
+        info "Monitor scale already set to a number — leaving it alone."
         return
     fi
 
     if grep -q '^local omarchy_monitor_scale = ' "$MONITORS_LUA"; then
-        info "Setting monitor catch-all scale to auto..."
+        info "Setting monitor scale default to $Z13_SCALE_DEFAULT..."
         run_cmd sed -i -E \
-            's|^local omarchy_monitor_scale = .*|local omarchy_monitor_scale = "auto"|' \
+            "s|^local omarchy_monitor_scale = .*|local omarchy_monitor_scale = $Z13_SCALE_DEFAULT|" \
             "$MONITORS_LUA"
-        success "Monitor catch-all scale now defers to the compositor."
+        success "Monitor scale default set to $Z13_SCALE_DEFAULT."
     else
         warn "No omarchy_monitor_scale line in $MONITORS_LUA — leaving it alone."
     fi
+}
+
+# Append the Z13 monitor rules to Omarchy's monitors.lua, once. The catch-all
+# above them already exists, so only the two per-output rules are added:
+#   eDP-1     — anchored at the origin, scale from the variable the scaling keys
+#               rewrite, so the keys drive the internal panel.
+#   HDMI-A-1  — pinned to 3840x2160@120 (its EDID prefers 4K@60) at scale 1.25,
+#               offset so its bottom-left corner meets the internal panel's
+#               bottom-left. The offset assumes the 1.6 default scale; scaling
+#               the internal panel while docked moves it (see docs).
+add_z13_monitor_rules() {
+    if file_contains "$MONITORS_LUA" 'output = "HDMI-A-1"'; then
+        info "Z13 monitor rules already present in monitors.lua."
+        return
+    fi
+
+    if [[ $DRY_RUN -eq 1 ]]; then
+        info "[DRY-RUN] would append Z13 monitor rules to $MONITORS_LUA"
+        return
+    fi
+
+    info "Adding Z13 monitor rules to monitors.lua..."
+    cat >> "$MONITORS_LUA" << 'EOF'
+
+-- Z13: internal panel at the origin, external 4K to its right with both bottom
+-- edges flush. eDP follows Omarchy's scaling keys through omarchy_monitor_scale;
+-- HDMI is pinned to 120 Hz because its EDID prefers 4K@60. The HDMI offset is
+-- for the 1.6 default scale — changing the internal scale while docked shifts it.
+hl.monitor({ output = "eDP-1", mode = "preferred", position = "0x0", scale = omarchy_monitor_scale })
+hl.monitor({ output = "HDMI-A-1", mode = "3840x2160@120", position = "1600x-728", scale = 1.25 })
+EOF
+    success "Z13 monitor rules added to monitors.lua."
 }
 
 # Undo the retired dock-disable machinery (the helper and the manual-disable
@@ -129,8 +170,7 @@ phase4_run() {
         return
     fi
 
-    # Deploy the Z13 Hyprland module (monitors, input, keybinds, autostart,
-    # window rules).
+    # Deploy the Z13 Hyprland module (input, keybinds, autostart, window rules).
     info "Installing Z13 Hyprland module..."
     run_cmd mkdir -p "$HYPR_DIR"
     run_cmd cp "$SCRIPT_DIR/templates/hypr/z13.lua" "$Z13_LUA"
@@ -143,8 +183,10 @@ phase4_run() {
     # hyprland.conf.
     remove_legacy_hyprland_state
 
-    # Keep Omarchy's clamshell helper from clobbering the 2.0 internal scale.
-    set_monitors_scale_auto
+    # Display config goes in Omarchy's monitors.lua: a concrete default scale so
+    # the scaling keys work, then the Z13 per-output rules.
+    set_monitors_scale_default
+    add_z13_monitor_rules
 
     # Deploy the platform profile change notification script (Fn+F5).
     info "Installing profile notification script..."

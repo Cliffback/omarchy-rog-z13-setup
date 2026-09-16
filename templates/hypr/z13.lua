@@ -7,34 +7,19 @@ local home = os.getenv("HOME") or ""
 
 -- ── Monitors ────────────────────────────────────────────────────────────────
 --
--- The 4K display is pinned to 120 Hz on purpose: its EDID advertises 4K@120
--- (VIC 118), but its preferred detailed timing is 4K@60, so "preferred" would
--- negotiate 60 Hz.
---
--- At 120 Hz the link carries YCbCr 4:2:0 (half the chroma resolution) because
--- 4K@120 4:4:4 needs ~25.1 Gbps and the DP-PCON HDMI path only has ~25.9 Gbps
--- with no headroom. At 4K@60 it carries RGB 4:4:4, which looks richer. This is
--- a bandwidth limit, not a colour-profile issue; see
--- docs/external-display-4k120-chroma.md. 4K@100 4:4:4 is the compromise if
--- colour fidelity is preferred over 120 Hz.
+-- Display config lives in Omarchy's own ~/.config/hypr/monitors.lua, not here.
+-- The scaling keys (SUPER+SLASH / SUPER+ALT+SLASH) rewrite omarchy_monitor_scale
+-- there and reload, and both the catch-all and the eDP rule read that variable.
+-- A per-output rule in this file would break them: Hyprland has no field-level
+-- merge, so a rule that omits scale does NOT inherit the catch-all — it falls
+-- back to PPI "auto" and the keys stop having any effect.
 --
 -- The internal panel stays on while an external display is attached. Disabling
--- it on hotplug was tried and removed: it drove Omarchy's internal-monitor
+-- it on hotplug was tried and removed: it drives Omarchy's internal-monitor
 -- toggle, whose clamshell watcher and modeless recovery loop issue hyprctl
--- reloads that raced the modeset and froze the session on unplug/replug.
--- Omarchy still disables the panel by itself in true clamshell (lid shut).
---
--- Positions are logical pixels from the top-left of the virtual layout, and
--- Hyprland's Y axis is inverted (negative is higher). The internal panel is
--- anchored at the origin so it renders correctly on its own when the external
--- display is unplugged. The external is offset so its bottom-left corner sits
--- at the internal panel's vertical midpoint:
---   eDP-1     2560x1600 @ 2.0  -> 1280x800  logical
---   HDMI-A-1  3840x2160 @ 1.25 -> 3072x1728 logical
---   x = eDP width        = 1280
---   y = 800/2 - 1728     = -1328
-hl.monitor({ output = "eDP-1", mode = "preferred", position = "0x0", scale = 2.0 })
-hl.monitor({ output = "HDMI-A-1", mode = "3840x2160@120", position = "1280x-1328", scale = 1.25 })
+-- reloads that raced the modeset and froze the session on unplug/replug
+-- (omarchy#7853, still open). Omarchy still disables the panel by itself in
+-- true clamshell (lid shut).
 
 -- ── Input ───────────────────────────────────────────────────────────────────
 --
