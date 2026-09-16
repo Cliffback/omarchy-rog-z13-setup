@@ -28,7 +28,12 @@ ask_yn() {
     fi
     local answer
     while true; do
-        read -rp "$(echo -e "${BOLD}$prompt [y/n]:${NC} ")" answer
+        if ! read -rp "$(echo -e "${BOLD}$prompt [y/n]:${NC} ")" answer; then
+            # EOF / non-interactive stdin — don't spin forever on a closed pipe
+            echo ""
+            warn "No input available — defaulting to no."
+            return 1
+        fi
         case "$answer" in
             [Yy]*) return 0 ;;
             [Nn]*) return 1 ;;
@@ -89,24 +94,39 @@ has_gamescope_caps() {
     getcap "$gs_bin" 2>/dev/null | grep -q 'cap_sys_nice'
 }
 
-# Check if gaming mode pacman hook is installed
+# Check if the DeckShift pacman hook is installed (re-applies Gaming Mode
+# state — gamescope cap, session entry, competing-session disables, Heroic
+# patch — after package upgrades).
 has_gaming_mode_hook() {
-    [[ -f /etc/pacman.d/hooks/gaming-mode.hook ]]
+    [[ -f /usr/share/libalpm/hooks/deckshift-gamescope-cap.hook ]]
 }
 
-# Check if HDR session override is installed for ROG Flow Z13
-# This override forces HDR10 PQ output to work around deficient panel EDID
-has_hdr_session_override() {
-    local session_file="$HOME/.config/gamescope-session-plus/sessions.d/steam"
-    [[ -f "$session_file" ]] && grep -q "GAMESCOPE_DEBUG_FORCE_HDR10_PQ_OUTPUT" "$session_file" 2>/dev/null
+# True once the DeckShift installer has been applied. deckshift-portal-recovery
+# is written unconditionally by DeckShift and does not exist in the retired
+# Super_shift_S_release.sh + hotfix stack, so it is a reliable migration marker.
+# (The pacman hook is prompt-gated, so it can legitimately be absent.)
+# A pre-migration install has gamescope + a session entry but no marker, which
+# is exactly the state that must NOT be treated as complete.
+deckshift_applied() {
+    [[ -f /usr/local/bin/deckshift-portal-recovery ]]
 }
 
-# Check if refresh rates are configured for ROG Flow Z13 180Hz panel
-has_refresh_rates_configured() {
-    local env_file="$HOME/.config/environment.d/gamescope-session-plus.conf"
-    [[ -f "$env_file" ]] \
-        && grep -q "^CUSTOM_REFRESH_RATES=" "$env_file" 2>/dev/null \
-        && grep -q "^STEAM_DISPLAY_REFRESH_LIMITS=" "$env_file" 2>/dev/null
+# Check that the DeckShift submodule is checked out. A plain `git clone`
+# without --recursive leaves templates/deckshift empty, so the installer must
+# detect that and initialise it rather than failing with a missing-file error.
+deckshift_ready() {
+    [[ -x "$SCRIPT_DIR/templates/deckshift/deckshift.sh" ]]
+}
+
+# Initialise/refresh the DeckShift submodule. Returns 0 on success.
+ensure_deckshift_submodule() {
+    if deckshift_ready; then
+        return 0
+    fi
+    [[ -d "$SCRIPT_DIR/.git" ]] || return 1
+    info "Initialising DeckShift submodule..."
+    git -C "$SCRIPT_DIR" submodule update --init --recursive templates/deckshift || return 1
+    deckshift_ready
 }
 
 # Check if Heroic needs gamescope patch (--ozone-platform=x11)

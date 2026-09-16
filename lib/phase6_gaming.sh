@@ -1,11 +1,18 @@
 #!/bin/bash
 # Phase 6: Gaming Tools (optional)
-# Gaming Mode script is now bundled in templates/Super_shift_S_release.sh
+# Gaming Mode is provided by the DeckShift submodule (templates/deckshift/),
+# forked to Cliffback/deckshift-z13 with the Z13-specific fixes on the z13
+# branch. DeckShift replaces the old bundled Super_shift_S_release.sh +
+# gaming-mode-hotfix.sh pair.
+
+# DeckShift's own installer/verifier, run from the submodule.
+DECKSHIFT_SCRIPT="$SCRIPT_DIR/templates/deckshift/deckshift.sh"
 
 phase6_check() {
-    # Skip phase only if ALL optional tools are already installed and up-to-date
-    is_pkg_installed gamescope \
+    deckshift_ready \
+        && is_pkg_installed gamescope \
         && [[ -f /usr/share/wayland-sessions/gamescope-session-steam-nm.desktop ]] \
+        && deckshift_applied \
         && [[ -d "$HOME/homebrew/services" ]] \
         && [[ -d "$HOME/homebrew/plugins/SimpleDeckyTDP" ]] \
         && is_pkg_installed heroic-games-launcher-bin \
@@ -13,60 +20,56 @@ phase6_check() {
         && [[ -f "$HOME/Applications/.emudeck-version" ]]
 }
 
-# Verify gaming mode health — runs even when phase is skipped
-# Args: $1 = "always_prompt" to always offer hotfix (used after fresh install)
+# Verify gaming mode health — runs even when phase is skipped.
+# Delegates to DeckShift's own --verify, which knows the current file layout
+# (Lua keybind, consolidated pacman hook, portal recovery, control panel).
+# Args: $1 = "always_prompt" to always offer the installer (used after fresh install)
 # Returns 0 if all checks pass, 1 if issues found
 phase6_verify() {
     local always_prompt="${1:-}"
-    
+
     # Only run if gamescope is installed
     is_pkg_installed gamescope || return 0
 
+    if ! deckshift_ready; then
+        warn "DeckShift submodule not checked out (templates/deckshift empty)"
+        if [[ $DRY_RUN -eq 1 ]]; then
+            info "[DRY-RUN] Would run: git submodule update --init --recursive"
+        elif ensure_deckshift_submodule; then
+            success "DeckShift submodule initialised."
+        else
+            warn "Could not initialise the submodule — run: git submodule update --init --recursive"
+            return 1
+        fi
+    fi
+
     local issues=0
+    local verify_output=""
+    local verify_rc=0
 
-    if ! has_gamescope_caps; then
-        warn "gamescope missing cap_sys_nice capability (may cause performance issues)"
-        ((issues++))
-    fi
-
-    if ! has_gaming_mode_hook; then
-        warn "Pacman hook not installed (fixes won't survive package updates)"
-        ((issues++))
-    fi
-
-    if [[ ! -f /usr/local/bin/gaming-session-switch ]]; then
-        warn "gaming-session-switch script not found (session switching may fail)"
-        ((issues++))
-    fi
-
-    if [[ ! -f /usr/local/bin/switch-to-desktop ]]; then
-        warn "switch-to-desktop script not found (returning to desktop may fail)"
-        ((issues++))
-    fi
-
-    if ! has_hdr_session_override; then
-        warn "HDR session override not installed (HDR may not work for non-Steam games)"
-        ((issues++))
-    fi
-
-    if ! has_refresh_rates_configured; then
-        warn "Refresh rates not configured (Steam may not show correct framerate options)"
-        ((issues++))
+    if [[ $DRY_RUN -eq 1 ]]; then
+        info "[DRY-RUN] Would run: $DECKSHIFT_SCRIPT --verify"
+    else
+        verify_output=$(bash "$DECKSHIFT_SCRIPT" --verify 2>&1) || verify_rc=$?
+        if [[ $verify_rc -ne 0 ]]; then
+            issues=1
+            echo "$verify_output" | grep -E '✗|⚠|MISSING|NOT|WARN' | head -20 || true
+        fi
     fi
 
     if [[ $issues -eq 0 ]]; then
         success "Gaming mode setup verified."
     else
-        warn "Found $issues issue(s) with gaming mode setup."
+        warn "DeckShift verification reported issues (see above)."
     fi
 
-    # Prompt for hotfix if issues found OR if always_prompt is set
+    # Prompt for the installer if issues found OR if always_prompt is set
     if [[ $issues -gt 0 ]] || [[ "$always_prompt" == "always_prompt" ]]; then
         if [[ $DRY_RUN -eq 1 ]]; then
-            info "[DRY-RUN] Would prompt to run gaming-mode-hotfix.sh"
-        elif ask_yn "Run gaming mode hotfix script? (Recommended)"; then
-            bash "$SCRIPT_DIR/templates/gaming-mode-hotfix.sh"
-            success "Gaming mode hotfix applied."
+            info "[DRY-RUN] Would prompt to re-run DeckShift installer"
+        elif ask_yn "Re-run the DeckShift installer to fix these? (Recommended)"; then
+            bash "$DECKSHIFT_SCRIPT"
+            success "DeckShift installer completed."
         fi
     fi
 
@@ -76,17 +79,38 @@ phase6_verify() {
 phase6_run() {
     local gamescope_ran=0
 
-    # --- Gamescope (NO SIGNAL script) ---
-    if is_pkg_installed gamescope && [[ -f /usr/share/wayland-sessions/gamescope-session-steam-nm.desktop ]]; then
-        success "Gamescope already installed."
+    # --- Gamescope (DeckShift gaming mode) ---
+    # A pre-migration install has gamescope + a session entry but was set up by
+    # the retired Super_shift_S_release.sh + hotfix pair, so it lacks the
+    # DeckShift marker. Treat that as "needs the installer", not "already done".
+    if is_pkg_installed gamescope \
+        && [[ -f /usr/share/wayland-sessions/gamescope-session-steam-nm.desktop ]] \
+        && deckshift_applied; then
+        success "Gamescope already installed (DeckShift)."
     elif [[ $DRY_RUN -eq 1 ]]; then
-        info "Would prompt to install Gamescope (Steam Gaming Mode)"
+        if is_pkg_installed gamescope; then
+            info "Would prompt to migrate Gaming Mode to DeckShift"
+        else
+            info "Would prompt to install Gamescope (Steam Gaming Mode) via DeckShift"
+        fi
     else
-        if ask_yn "Install Gamescope (Steam Gaming Mode)?"; then
-            gamescope_ran=1
-            info "Running Gaming Mode setup script..."
-            bash "$SCRIPT_DIR/templates/Super_shift_S_release.sh"
-            success "Gamescope installed."
+        if ! deckshift_ready && ! ensure_deckshift_submodule; then
+            warn "DeckShift submodule unavailable — skipping Gaming Mode install."
+            warn "Run: git submodule update --init --recursive"
+        else
+            local gs_prompt="Install Gamescope (Steam Gaming Mode)?"
+            if is_pkg_installed gamescope; then
+                warn "Gaming Mode was set up by the retired Super_shift_S_release.sh +"
+                warn "hotfix stack. DeckShift replaces it (Lua keybind, portal recovery,"
+                warn "consolidated pacman hook, power-profile restore)."
+                gs_prompt="Migrate Gaming Mode to DeckShift?"
+            fi
+            if ask_yn "$gs_prompt"; then
+                gamescope_ran=1
+                info "Running DeckShift installer..."
+                bash "$DECKSHIFT_SCRIPT"
+                success "Gamescope installed."
+            fi
         fi
     fi
 
@@ -146,7 +170,7 @@ phase6_run() {
                 if ask_yn "Apply Heroic Gamescope patch?"; then
                     info "Patching Heroic for Gamescope compatibility..."
                     if bash "$SCRIPT_DIR/templates/patch-heroic-gamescope.sh"; then
-                        # Install the patch script system-wide for pacman hook
+                        # Install the patch script system-wide for the DeckShift pacman hook
                         sudo cp "$SCRIPT_DIR/templates/patch-heroic-gamescope.sh" /usr/local/bin/patch-heroic-gamescope
                         sudo chmod +x /usr/local/bin/patch-heroic-gamescope
                         success "Heroic patched and patch script installed to /usr/local/bin/"
@@ -212,7 +236,7 @@ phase6_run() {
     # --- Always verify gaming mode health at end of phase ---
     # In dry-run: shows current health status
     # After fresh install: already ran with always_prompt above
-    # Otherwise: runs verification, prompts for hotfix only if issues found
+    # Otherwise: runs verification, prompts for installer only if issues found
     if [[ $gamescope_ran -eq 0 ]]; then
         phase6_verify || true
     fi

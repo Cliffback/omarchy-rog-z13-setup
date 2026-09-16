@@ -64,6 +64,8 @@ Installs a TDP power menu to ~/.local/bin/rog-quick.sh. The menu (using omarchy-
 
 Installs Gamescope gaming mode (Steam Big Picture in a dedicated compositor session, similar to Steam Deck). Includes session switching between Hyprland and Gamescope via SDDM, performance tuning, NetworkManager handoff, and external drive auto-mounting. Optionally installs Decky Loader (plugin framework), SimpleDeckyTDP (TDP control plugin), Heroic Games Launcher (Epic/GOG/Amazon), a Heroic Gamescope compatibility patch, and EmuDeck (emulator setup and ROM management).
 
+Gaming mode itself is provided by [DeckShift](https://github.com/28allday/deckshift), vendored as a git submodule at `templates/deckshift/` and forked to [Cliffback/deckshift-z13](https://github.com/Cliffback/deckshift-z13) with Z13-specific fixes on the `z13` branch (side-button toggle, external-display default, 180 Hz refresh limits, Quattro NetworkManager cleanup, consolidated pacman hook). Clone with `--recursive`, or let the installer initialise the submodule on first run.
+
 **Phase 7 - CachyOS Mirror Optimization (optional)**
 
 Installs cachyos-rate-mirrors and ranks mirrors for optimal download speeds.
@@ -201,9 +203,8 @@ templates/
   hyprland-z13.conf       Hyprland config block appended in Phase 4
   rog-profile-notify.sh   Platform profile change notification script
   rog-quick.sh            TDP menu script deployed in Phase 5
-  Super_shift_S_release.sh  Gaming mode installer script for Phase 6
-  gaming-mode-hotfix.sh   Gaming mode capability fixes for Phase 6
-  gamescope-hdr-session-steam  HDR session override for Phase 6
+  deckshift/              DeckShift gaming-mode submodule (fork: deckshift-z13, z13 branch)
+  gamescope-hdr-session-steam  HDR session override for Phase 6 (optional, disabled by default)
   patch-heroic-gamescope.sh    Heroic Gamescope compatibility patch
   hibernate-wake-fix.sh   Standalone hibernate wake fix script
   99-thunderbolt-no-d3.rules  Thunderbolt dock udev rules for Phase 10

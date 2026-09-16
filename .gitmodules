@@ -1,0 +1,4 @@
+[submodule "templates/deckshift"]
+	path = templates/deckshift
+	url = https://github.com/Cliffback/deckshift-z13.git
+	branch = z13
