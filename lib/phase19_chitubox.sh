@@ -49,13 +49,6 @@ phase19_check() {
         if [[ ! -f "$CHITU_ICON_DST" ]]; then
             return 1
         fi
-
-        # Hyprland rule is optional (commented out by default — tiling mode works best)
-        local hyprland_conf="$HOME/.config/hypr/hyprland.conf"
-        if [[ -f "$hyprland_conf" ]] && ! grep -qF "match:class ^ChituManager$" "$hyprland_conf" 2>/dev/null; then
-            # Rule not present at all — phase needs to run to add the placeholder
-            return 1
-        fi
     fi
 
     return 0
@@ -186,22 +179,10 @@ Categories=Graphics;Utility;
 EOF
         success "Desktop entry created at $CHITU_DESKTOP"
 
-        # ChituManager works best in tiling mode on Hyprland.
-        # Floating rules cause crashes due to OpenSSL 3.x incompatibility.
-        # The window fits fine within a tile (1200x800 native, 1280x800 logical).
-        # Only add a commented placeholder to document this behavior.
-        local hyprland_conf="$HOME/.config/hypr/hyprland.conf"
-        if [[ -f "$hyprland_conf" ]] && ! grep -qF "match:class ^ChituManager$" "$hyprland_conf" 2>/dev/null; then
-            info "Adding Hyprland window rule for ChituManager..."
-
-            run_append "$hyprland_conf" cat << EOF
-
-# ChituManager: tiling mode (floating causes crashes due to OpenSSL 3.x incompatibility)
-# windowrule = float 1, match:class ^ChituManager$, match:xwayland 1
-EOF
-            success "Hyprland window rule placeholder added for ChituManager."
-        fi
-
+        # ChituManager is deliberately left tiled: a floating rule crashes it
+        # (OpenSSL 3.x incompatibility). The window fits a tile fine at
+        # 1200x800 native. The rationale is documented in z13.lua (Phase 4);
+        # this phase no longer writes Hyprland config.
         run_cmd update-desktop-database "$HOME/.local/share/applications" 2>/dev/null
         success "ChituManager configured."
     else

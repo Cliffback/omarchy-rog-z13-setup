@@ -201,29 +201,6 @@ fix_permissions() {
     success "Permissions fixed."
 }
 
-# ── Add Hyprland window rule for UE dialogs ──
-add_hyprland_windowrule() {
-    local HYPRLAND_CONF="${HOME}/.config/hypr/hyprland.conf"
-
-    if [[ ! -f "$HYPRLAND_CONF" ]]; then
-        info "Hyprland config not found — skipping window rule."
-        return 0
-    fi
-
-    if grep -q "match:class UnrealEditor" "$HYPRLAND_CONF" 2>/dev/null; then
-        info "UE window rule already present in Hyprland config."
-        return 0
-    fi
-
-    info "Adding Hyprland window rule for UE dialogs..."
-    if [[ $DRY_RUN -eq 0 ]]; then
-        echo "" >> "$HYPRLAND_CONF"
-        echo "# Center Unreal Editor windows (dialogs, settings, etc. spawn off-center on XWayland)" >> "$HYPRLAND_CONF"
-        echo "windowrule = center 1, match:class UnrealEditor" >> "$HYPRLAND_CONF"
-    fi
-    success "Window rule added to ${HYPRLAND_CONF}"
-}
-
 # ── Install icons ──
 install_icons() {
     local template_dir="$1"
@@ -592,7 +569,6 @@ main() {
     fix_permissions "$selected_version"
     compile_fake_dpi
     install_nvim_wrapper
-    add_hyprland_windowrule
     install_icons "$TEMPLATES_DIR"
     install_mime "$TEMPLATES_DIR"
     create_launcher "$selected_version"

@@ -14,7 +14,6 @@ LYCHEE_MIME_XML="$HOME/.local/share/mime/packages/lychee-slicer.xml"
 LYCHEE_MIME_TYPE="application/x-lychee-slicer"
 LYCHEE_MIME_ICON_SRC="/usr/share/icons/hicolor/512x512/apps/lycheeslicer.png"
 LYCHEE_MIME_ICON_DST="$HOME/.local/share/icons/hicolor/512x512/mimetypes/application-x-lychee-slicer.png"
-HYPRLAND_CONF="$HOME/.config/hypr/hyprland.conf"
 
 phase14_check() {
     is_pkg_installed "$LYCHEE_PKG" \
@@ -24,8 +23,7 @@ phase14_check() {
         && [[ -f "$LYCHEE_DESKTOP" ]] \
         && grep -q 'lychee-scaled' "$LYCHEE_DESKTOP" 2>/dev/null \
         && [[ -f "$LYCHEE_MIME_XML" ]] \
-        && [[ -f "$LYCHEE_MIME_ICON_DST" ]] \
-        && file_contains "$HYPRLAND_CONF" "Lycheeslicer"
+        && [[ -f "$LYCHEE_MIME_ICON_DST" ]]
 }
 
 phase14_run() {
@@ -138,18 +136,7 @@ MIMEXML
     run_cmd xdg-mime default lycheeslicer.desktop "$LYCHEE_MIME_TYPE"
     success ".lys files now associated with Lychee Slicer."
 
-    # Center file picker dialog (XWayland spawns it at 0,0 by default)
-    # The file picker uses class "Lycheeslicer" (lowercase s), distinct from
-    # the main window's "LycheeSlicer" (capital S).
-    if ! file_contains "$HYPRLAND_CONF" "Lycheeslicer"; then
-        info "Adding window rule to center Lychee file picker..."
-        if [[ $DRY_RUN -eq 1 ]]; then
-            info "[DRY-RUN] would append file picker center rule to $HYPRLAND_CONF"
-        else
-            echo "" >> "$HYPRLAND_CONF"
-            echo "# Center Lychee Slicer file picker (spawns at 0,0 otherwise)" >> "$HYPRLAND_CONF"
-            echo "windowrule = center 1, match:class Lycheeslicer" >> "$HYPRLAND_CONF"
-        fi
-        success "File picker centering rule added."
-    fi
+    # The file-picker centering rule lives in ~/.config/hypr/z13.lua (Phase 4),
+    # not here: Omarchy 4 reads .lua, and Phase 4 overwrites that file on every
+    # run, so a rule appended from this phase would be wiped.
 }

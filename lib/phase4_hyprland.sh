@@ -19,6 +19,11 @@ IIO_WRAPPER="$HOME/.local/bin/iio-hyprland"
 Z13_DOCK="$HOME/.local/bin/z13-dock-internal"
 INTERNAL_DISABLE_FLAG="$HOME/.local/state/omarchy/toggles/hypr/internal-monitor-disable.lua"
 
+# The pre-Quattro Hyprland config. Omarchy 4's Lua provider never reads it, so
+# once hyprland.lua exists it is dead weight — and actively misleading, since
+# edits there appear to do nothing. Everything it held now lives in z13.lua.
+DEAD_HYPRLAND_CONF="$HYPR_DIR/hyprland.conf"
+
 # Omarchy's clamshell helper re-applies the scale it reads from monitors.lua on
 # every hotplug. With a literal number there it would clobber the 2.0 scale set
 # in z13.lua, so the catch-all is left on "auto" for the compositor to resolve.
@@ -33,6 +38,7 @@ phase4_check() {
         && [[ -x "$IIO_WRAPPER" ]] \
         && [[ ! -e "$Z13_DOCK" ]] \
         && [[ ! -e "$INTERNAL_DISABLE_FLAG" ]] \
+        && [[ ! -e "$DEAD_HYPRLAND_CONF" ]] \
         && monitors_scale_defers \
         && file_contains "$HYPRLAND_LUA" "$Z13_REQUIRE"
 }
@@ -86,10 +92,12 @@ set_monitors_scale_auto() {
     fi
 }
 
-# Undo the retired dock-disable machinery: the helper and the manual-disable
-# toggle it wrote. Leaving the toggle behind would keep the internal panel off
-# with no external display attached.
-remove_legacy_dock_helper() {
+# Undo the retired dock-disable machinery (the helper and the manual-disable
+# toggle it wrote) and drop the dead pre-Quattro hyprland.conf. Leaving the
+# toggle behind would keep the internal panel off with no external display
+# attached; leaving hyprland.conf behind makes edits there look effective when
+# the Lua provider ignores the file entirely.
+remove_legacy_hyprland_state() {
     local removed=0
 
     if [[ -e "$Z13_DOCK" ]]; then
@@ -104,7 +112,13 @@ remove_legacy_dock_helper() {
         removed=1
     fi
 
-    (( removed )) && success "Retired dock-disable state removed."
+    if [[ -e "$DEAD_HYPRLAND_CONF" ]]; then
+        info "Removing dead pre-Quattro hyprland.conf (Lua provider ignores it)..."
+        run_cmd rm -f "$DEAD_HYPRLAND_CONF"
+        removed=1
+    fi
+
+    (( removed )) && success "Retired Hyprland state removed."
     return 0
 }
 
@@ -125,8 +139,9 @@ phase4_run() {
     # The internal panel is no longer disabled on hotplug. Disabling it drove
     # Omarchy's internal-monitor toggle, whose clamshell watcher and modeless
     # recovery loop issue hyprctl reloads that raced the modeset and froze the
-    # session on unplug/replug.
-    remove_legacy_dock_helper
+    # session on unplug/replug. This also drops the dead pre-Quattro
+    # hyprland.conf.
+    remove_legacy_hyprland_state
 
     # Keep Omarchy's clamshell helper from clobbering the 2.0 internal scale.
     set_monitors_scale_auto

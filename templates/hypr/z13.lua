@@ -107,6 +107,11 @@ o.window("Lycheeslicer", { center = true })
 -- XWayland).
 o.window("UnrealEditor", { center = true })
 
+-- ChituManager (CHITUBOX's remote printer manager) is deliberately left tiled:
+-- a floating rule crashes it (OpenSSL 3.x incompatibility), and its window
+-- fits a tile fine at 1200x800 native. No rule is needed — this note just
+-- records why, so nobody "fixes" it by floating the window.
+
 -- Fix Blender's native Wayland file dialog (too small / unresizable).
 o.window({ class = "blender", title = "Blender File View" }, {
   float = true,
