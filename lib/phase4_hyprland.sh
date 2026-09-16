@@ -13,6 +13,7 @@ Z13_LUA="$HYPR_DIR/z13.lua"
 Z13_REQUIRE='require("hypr.z13")'
 
 NOTIFY_SCRIPT="$HOME/.local/bin/rog-profile-notify.sh"
+IIO_WRAPPER="$HOME/.local/bin/iio-hyprland"
 
 # Retired. Kept only so re-runs clean it up.
 Z13_DOCK="$HOME/.local/bin/z13-dock-internal"
@@ -29,6 +30,7 @@ monitors_scale_defers() {
 phase4_check() {
     [[ -f "$Z13_LUA" ]] \
         && [[ -x "$NOTIFY_SCRIPT" ]] \
+        && [[ -x "$IIO_WRAPPER" ]] \
         && [[ ! -e "$Z13_DOCK" ]] \
         && [[ ! -e "$INTERNAL_DISABLE_FLAG" ]] \
         && monitors_scale_defers \
@@ -135,6 +137,13 @@ phase4_run() {
     run_cmd cp "$SCRIPT_DIR/templates/rog-profile-notify.sh" "$NOTIFY_SCRIPT"
     run_cmd chmod +x "$NOTIFY_SCRIPT"
     success "Profile notification script installed."
+
+    # Deploy the iio-hyprland wrapper (auto-rotation). It suppresses a libdbus
+    # abort on the binary's exit paths; z13.lua launches it by absolute path.
+    info "Installing iio-hyprland wrapper..."
+    run_cmd cp "$SCRIPT_DIR/templates/iio-hyprland-wrapper.sh" "$IIO_WRAPPER"
+    run_cmd chmod +x "$IIO_WRAPPER"
+    success "iio-hyprland wrapper installed at $IIO_WRAPPER"
 
     # Load the module from the main config.
     if file_contains "$HYPRLAND_LUA" "$Z13_REQUIRE"; then

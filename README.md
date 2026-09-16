@@ -56,11 +56,11 @@ This phase also removes the retired Z13 power-profile churn machinery (the batte
 
 Installs a Z13 Hyprland module to ~/.config/hypr/z13.lua, required from ~/.config/hypr/hyprland.lua. Omarchy 4 (Quattro) reads `.lua`, not `.conf`, so the old append-to-hyprland.conf approach is dead. The module covers monitors, input, keybinds, autostart, and window rules: tablet stylus mapping to eDP-1, the virtual keyboard, the power panel, the ROG Quick TDP menu, screenshot capture, and rog-control-center. It also installs a profile change notification script that shows a desktop notification when the platform profile is cycled via Fn+F5.
 
-The 4K display is pinned to 3840x2160@120 because its EDID prefers 4K@60 (the 120Hz mode is advertised separately), and the internal panel runs at scale 2.0. The internal panel stays on while an external display is attached: disabling it on hotplug drove Omarchy's internal-monitor toggle, whose clamshell watcher and modeless recovery loop issue `hyprctl reload`s that raced the modeset and froze the session on unplug/replug. Omarchy still disables the panel by itself in true clamshell (lid shut). Phase 4 also sets the monitor catch-all scale in ~/.config/hypr/monitors.lua to `"auto"`, so Omarchy's clamshell helper defers to the per-output scale in z13.lua instead of re-applying the old 1.25.
+The 4K display is pinned to 3840x2160@120 because its EDID prefers 4K@60 (the 120Hz mode is advertised separately), and the internal panel runs at scale 2.0. Note that 4K@120 negotiates YCbCr 4:2:0 (half chroma) — 4:4:4 needs more bandwidth than the DP-PCON HDMI path provides; 4K@100 4:4:4 is the compromise. See [docs/external-display-4k120-chroma.md](docs/external-display-4k120-chroma.md). The internal panel stays on while an external display is attached: disabling it on hotplug drove Omarchy's internal-monitor toggle, whose clamshell watcher and modeless recovery loop issue `hyprctl reload`s that raced the modeset and froze the session on unplug/replug. Omarchy still disables the panel by itself in true clamshell (lid shut). Phase 4 also sets the monitor catch-all scale in ~/.config/hypr/monitors.lua to `"auto"`, so Omarchy's clamshell helper defers to the per-output scale in z13.lua instead of re-applying the old 1.25.
 
 The displays are laid out side by side with the external display offset so its bottom-left corner meets the internal panel's vertical midpoint: the internal panel is anchored at the origin (so it renders correctly when undocked) and the external sits at `1280x-1328` in the logical layout.
 
-Note: `iio-hyprland` auto-rotation is broken under Quattro — it drives rotation through `hyprctl keyword`, which the Lua config parser rejects. It is deliberately not started; rotation is a known open item.
+Auto-rotation is handled by `iio-hyprland`, launched from `z13.lua` through a wrapper at `~/.local/bin/iio-hyprland`. The wrapper only sets `DBUS_FATAL_WARNINGS=0`: upstream's binary calls `dbus_connection_close()` on a shared connection, which aborts with SIGABRT on its exit paths (e.g. the monitor not being up yet at session start) and trips Omarchy's crash watcher. The AUR package tracks upstream master, which emits `hyprctl eval` for the Lua parser — Phase 3 rebuilds `iio-hyprland-git` when the installed build still uses the dead `hyprctl keyword`.
 
 **Phase 5 - ROG Quick TDP menu**
 
@@ -233,6 +233,7 @@ scripts/
 docs/
   unreal-engine-neovim-integration.md  Full UE+nvim integration guide
   z13-power-profile-churn-fix.md       AC0 flapping bug: cause, fix, validation
+  external-display-4k120-chroma.md     4K@120 YCbCr 4:2:0 bandwidth limit
   omarchy-quattro-upgrade-checklist.md Omarchy 4 upgrade plan
   scx-sched-ext-evaluation.md          sched_ext evaluation (not adopted)
 ```

@@ -5,6 +5,15 @@
 # to survive omarchy's orphan package cleanup
 FIRMWARE_PKGS=(linux-firmware-amdgpu linux-firmware-mediatek linux-firmware-intel linux-firmware-whence linux-firmware-cirrus)
 
+# Hyprland 0.55+ with the Lua config parser rejects `hyprctl keyword`, which is
+# what iio-hyprland-git builds before r93 emitted. Upstream master switched to
+# `hyprctl eval` (hl.monitor/hl.config), so a Lua-capable build is the marker
+# that the package is new enough to drive rotation on Quattro.
+iio_hyprland_is_lua_capable() {
+    [[ -x /usr/bin/iio-hyprland ]] \
+        && strings /usr/bin/iio-hyprland 2>/dev/null | grep -q 'hyprctl eval'
+}
+
 phase3_check() {
     # Check firmware packages are installed AND explicitly marked
     for pkg in "${FIRMWARE_PKGS[@]}"; do
@@ -12,6 +21,7 @@ phase3_check() {
     done
     
     is_pkg_installed iio-hyprland-git \
+        && iio_hyprland_is_lua_capable \
         && is_pkg_installed wvkbd-deskintl \
         && is_pkg_installed rofi-wayland \
         && [[ -f /etc/modprobe.d/mt7925e.conf ]] \
@@ -80,9 +90,16 @@ phase3_run() {
         success "yay installed."
     fi
 
-    # Install AUR packages
+    # Install AUR packages. iio-hyprland-git is rebuilt (not just installed) when
+    # the existing build predates Lua support: the AUR package tracks upstream
+    # master, so a stale binary is the only reason rotation breaks on Quattro.
     local aur_pkgs=()
-    is_pkg_installed iio-hyprland-git || aur_pkgs+=(iio-hyprland-git)
+    if ! is_pkg_installed iio-hyprland-git; then
+        aur_pkgs+=(iio-hyprland-git)
+    elif ! iio_hyprland_is_lua_capable; then
+        warn "iio-hyprland build predates Hyprland Lua support — rebuilding from AUR..."
+        aur_pkgs+=(iio-hyprland-git)
+    fi
     is_pkg_installed wvkbd-deskintl   || aur_pkgs+=(wvkbd-deskintl)
     is_pkg_installed rofi-wayland     || aur_pkgs+=(rofi-wayland)
 

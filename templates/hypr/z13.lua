@@ -11,6 +11,13 @@ local home = os.getenv("HOME") or ""
 -- (VIC 118), but its preferred detailed timing is 4K@60, so "preferred" would
 -- negotiate 60 Hz.
 --
+-- At 120 Hz the link carries YCbCr 4:2:0 (half the chroma resolution) because
+-- 4K@120 4:4:4 needs ~25.1 Gbps and the DP-PCON HDMI path only has ~25.9 Gbps
+-- with no headroom. At 4K@60 it carries RGB 4:4:4, which looks richer. This is
+-- a bandwidth limit, not a colour-profile issue; see
+-- docs/external-display-4k120-chroma.md. 4K@100 4:4:4 is the compromise if
+-- colour fidelity is preferred over 120 Hz.
+--
 -- The internal panel stays on while an external display is attached. Disabling
 -- it on hotplug was tried and removed: it drove Omarchy's internal-monitor
 -- toggle, whose clamshell watcher and modeless recovery loop issue hyprctl
@@ -82,6 +89,13 @@ o.bind("SUPER + F12", "Screenshot", "omarchy-capture-screenshot")
 --
 -- Platform profile change notification (Fn+F5 / Armory Crate key).
 o.launch_on_start(home .. "/.local/bin/rog-profile-notify.sh")
+
+-- Automatic screen rotation from the accelerometer (iio-sensor-proxy). The
+-- wrapper suppresses a libdbus abort on the binary's exit paths; it execs
+-- /usr/bin/iio-hyprland, which emits `hyprctl eval` (hl.monitor/hl.config) and
+-- defaults to eDP-1. Launched by absolute path: the compositor's PATH puts
+-- /usr/bin before ~/.local/bin, so a bare name would miss the wrapper.
+o.launch_on_start(home .. "/.local/bin/iio-hyprland")
 
 -- ── Window rules ────────────────────────────────────────────────────────────
 
