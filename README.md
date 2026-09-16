@@ -50,6 +50,8 @@ Also fixes an audio issue where speakers go silent after plugging/unplugging hea
 
 Additionally initializes the speaker amplifier mixer (ALC294 + CS35L41) and enables HDMI audio auto-profile for AMD HDMI controllers so external monitors appear as audio output devices.
 
+This phase also removes the retired Z13 power-profile churn machinery (the battery-keyed `99-power-profile.rules` / `99-wifi-powersave.rules` udev rules, the debounced profile wrapper, the Wi-Fi power-save wrapper, and the post-update hook). Under Omarchy 4 (Quattro) profile switching moved into Quickshell and no longer inherits the AC0 flap, so the workaround is obsolete — and broken, since `~/.local/share/omarchy` is now a symlink to root-owned `/usr/share/omarchy`. See [docs/z13-power-profile-churn-fix.md](docs/z13-power-profile-churn-fix.md).
+
 **Phase 4 - Hyprland configuration**
 
 Appends Z13-specific settings to ~/.config/hypr/hyprland.conf. This includes tablet input mapping and keybinds for the virtual keyboard, power profile picker, ROG Quick TDP menu, screenshot capture, and rog-control-center. Also installs a profile change notification script that shows a desktop notification when the platform profile is cycled via Fn+F5.
@@ -210,11 +212,6 @@ templates/
   99-thunderbolt-no-d3.rules  Thunderbolt dock udev rules for Phase 10
   controller-gaming-trigger.py   Gamepad combo listener for Phase 11
   controller-gaming-trigger.service  Systemd user service for Phase 11
-  99-power-profile.rules  Battery-keyed power-profile udev rule (Phase 3)
-  99-wifi-powersave.rules Battery-keyed Wi-Fi power-save udev rule (Phase 3)
-  omarchy-powerprofiles-set-debounced  Debounced profile switcher (Phase 3)
-  z13-wifi-powersave-auto.sh  Wi-Fi power-save wrapper (Phase 3)
-  z13-power-profile-debounce-hook.sh  Post-update hook re-applying both rules (Phase 3)
   unreal-engine/
     nvim-wrapper.sh       Smart nvim wrapper for UE integration
     fake_dpi.c            HiDPI interceptor for UE on HiDPI displays

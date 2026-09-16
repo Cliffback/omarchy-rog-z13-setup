@@ -18,22 +18,11 @@ phase3_check() {
         && is_pkg_installed alsa-utils \
         && [[ ! -f ~/.config/wireplumber/wireplumber.conf.d/alsa-soft-mixer.conf ]] \
         && [[ -f ~/.config/wireplumber/wireplumber.conf.d/hdmi-audio-autoactivate.conf ]] \
-        && [[ -f ~/.local/share/omarchy/bin/omarchy-powerprofiles-set-debounced ]] \
-        && ! grep -q '__HOME__' ~/.local/share/omarchy/bin/omarchy-powerprofiles-set-debounced 2>/dev/null \
-        && ! grep -q 'sleep 3' ~/.local/share/omarchy/bin/omarchy-powerprofiles-set-debounced 2>/dev/null \
-        && grep -q 'find_system_battery' ~/.local/share/omarchy/bin/omarchy-powerprofiles-set-debounced 2>/dev/null \
-        && [[ -x ~/.local/bin/z13-wifi-powersave-auto ]] \
-        && [[ -f /etc/udev/rules.d/99-power-profile.rules ]] \
-        && grep -q 'debounced' /etc/udev/rules.d/99-power-profile.rules 2>/dev/null \
-        && ! grep -q '__HOME__' /etc/udev/rules.d/99-power-profile.rules 2>/dev/null \
-        && grep -q 'KERNEL=="BAT\*"' /etc/udev/rules.d/99-power-profile.rules 2>/dev/null \
-        && ! grep '^SUBSYSTEM' /etc/udev/rules.d/99-power-profile.rules 2>/dev/null | grep -q 'unit=omarchy-power-profile' \
-        && [[ -f /etc/udev/rules.d/99-wifi-powersave.rules ]] \
-        && grep -q 'KERNEL=="BAT\*"' /etc/udev/rules.d/99-wifi-powersave.rules 2>/dev/null \
-        && ! grep '^SUBSYSTEM' /etc/udev/rules.d/99-wifi-powersave.rules 2>/dev/null | grep -q 'ATTR{status}' \
-        && ! grep '^SUBSYSTEM' /etc/udev/rules.d/99-wifi-powersave.rules 2>/dev/null | grep -q 'unit=omarchy-wifi-powersave' \
-        && [[ -f ~/.config/omarchy/hooks/post-update.d/z13-power-profile-debounce-hook.sh ]] \
-        && grep -q 'Re-keying' ~/.config/omarchy/hooks/post-update.d/z13-power-profile-debounce-hook.sh 2>/dev/null
+        && [[ ! -f /etc/udev/rules.d/99-power-profile.rules ]] \
+        && [[ ! -f /etc/udev/rules.d/99-power-profile.rules.omarchy-disabled ]] \
+        && [[ ! -f /etc/udev/rules.d/99-wifi-powersave.rules ]] \
+        && [[ ! -f ~/.local/bin/z13-wifi-powersave-auto ]] \
+        && [[ ! -f ~/.config/omarchy/hooks/post-update.d/z13-power-profile-debounce-hook.sh ]]
 }
 
 phase3_run() {
@@ -146,96 +135,80 @@ phase3_run() {
         warn "ALC294 codec not found — skipping mixer init"
     fi
 
-    # Power profile debounce: The Z13 generates spurious power_supply events.
-    # AC0.online flaps 0 <-> 1 every 1-3 seconds while the battery is actively
-    # charging (proven: the Mains-keyed wifi-powersave rule toggled 101 times in
-    # 14 minutes while capacity rose monotonically 53% -> 64%). Each event
-    # triggers a profile set -> asusd fan curve rewrite (momentary fan stop),
-    # notification spam, and Wi-Fi power-save churn.
+    # Power-profile churn fix: RETIRED under Omarchy 4 (Quattro).
     #
-    # v2 fix (2025-05-24): removed fixed --unit name from systemd-run (caused
-    # boot-time collisions) and added flock + idempotency to the wrapper script.
+    # Under Omarchy 3, profile switching lived in udev rules keyed on the AC
+    # "Mains" supply. On this machine AC0.online flaps 0 <-> 1 every 1-3
+    # seconds while the battery is actively charging, so each event triggered a
+    # profile set -> asusd fan-curve rewrite (momentary fan stop), notification
+    # spam, and Wi-Fi power-save churn (proven: 205 debounce invocations and
+    # 101 wifi-powersave runs in 14 minutes while capacity rose monotonically).
+    # The fix re-keyed those rules onto BAT0.status and wrapped the profile
+    # script in a debounce.
     #
-    # v6 fix (2026-09-15): key both udev rules on the system battery
-    # (KERNEL=="BAT*", type=Battery) instead of Mains, because BAT0.status
-    # reflects actual power flow and stays stable while AC0 flaps. The wrapper
-    # script now reads BAT0.status (Discharging -> battery, else -> AC) and
-    # keeps AC0 detection only as a fallback for machines without a battery.
-    # v5's load-triggered diagnosis was wrong: 35 minutes of 32-thread load at
-    # 90% charge produced zero events, while charging produced 205 in 14 min.
-    local debounce_script="$HOME/.local/share/omarchy/bin/omarchy-powerprofiles-set-debounced"
-    local debounce_rule="/etc/udev/rules.d/99-power-profile.rules"
-    local wifi_rule="/etc/udev/rules.d/99-wifi-powersave.rules"
-    local debounce_hook="$HOME/.config/omarchy/hooks/post-update.d/z13-power-profile-debounce-hook.sh"
+    # Quattro deleted the udev rules and moved profile switching into
+    # Quickshell: plugins/services/battery/Service.qml watches
+    # UPower.onBatteryChanged and calls `omarchy-powerprofiles-set`. Measured
+    # on 2026-09-16 over a 36% -> 90% charge: AC0 and UPower.onBattery each
+    # moved exactly once (at plug-in), with zero unpaired transitions, versus
+    # 205 debounce invocations in 14 minutes under the old mechanism. The bug
+    # does not exist under Quattro, so the debounce machinery is not just
+    # unnecessary but actively harmful: ~/.local/share/omarchy is now a symlink
+    # to root-owned /usr/share/omarchy, so the wrapper cannot be installed and
+    # the udev rule fails on every battery event.
+    #
+    # This step therefore removes the retired machinery rather than installing
+    # it. It is deliberately unconditional and idempotent: re-running the repo
+    # on a machine that still carries the old fix cleans it up.
+    local legacy_rules=(
+        /etc/udev/rules.d/99-power-profile.rules
+        /etc/udev/rules.d/99-power-profile.rules.omarchy-disabled
+        /etc/udev/rules.d/99-wifi-powersave.rules
+    )
+    # Root-owned: ~/.local/share/omarchy is a symlink to /usr/share/omarchy on
+    # Quattro, so this path needs sudo even though it reads as a home path.
+    local legacy_root_files=(
+        "$HOME/.local/share/omarchy/bin/omarchy-powerprofiles-set-debounced"
+    )
+    local legacy_files=(
+        "$HOME/.local/bin/z13-wifi-powersave-auto"
+        "$HOME/.config/omarchy/hooks/post-update.d/z13-power-profile-debounce-hook.sh"
+    )
 
-    # Reinstall script if missing, has template placeholders, is the old v1
-    # version with a naive "sleep 3", or predates the v6 battery-based detection.
-    if [[ ! -f "$debounce_script" ]] \
-        || grep -q '__HOME__' "$debounce_script" 2>/dev/null \
-        || grep -q 'sleep 3' "$debounce_script" 2>/dev/null \
-        || ! grep -q 'find_system_battery' "$debounce_script" 2>/dev/null; then
-        info "Installing debounced power profile switcher (v6, battery-keyed)..."
-        mkdir -p "$HOME/.local/bin"
-        sed "s|__HOME__|$HOME|g" "$SCRIPT_DIR/templates/omarchy-powerprofiles-set-debounced" > "$debounce_script"
-        chmod +x "$debounce_script"
-        success "Debounce script installed."
+    local removed_rules=() removed_files=() removed_root_files=()
+    local f
+    for f in "${legacy_rules[@]}"; do
+        [[ -e $f ]] && removed_rules+=("$f")
+    done
+    for f in "${legacy_root_files[@]}"; do
+        [[ -e $f ]] && removed_root_files+=("$f")
+    done
+    for f in "${legacy_files[@]}"; do
+        [[ -e $f ]] && removed_files+=("$f")
+    done
+
+    if [[ ${#removed_rules[@]} -gt 0 || ${#removed_root_files[@]} -gt 0 ]]; then
+        info "Removing retired power-profile udev rules (Quattro uses Quickshell)..."
+        for f in "${removed_rules[@]}"; do
+            run_sudo rm -f "$f"
+        done
+        for f in "${removed_root_files[@]}"; do
+            run_sudo rm -f "$f"
+        done
+        [[ ${#removed_rules[@]} -gt 0 ]] && run_sudo udevadm control --reload-rules
+        success "Retired udev rules removed."
     fi
 
-    # Reinstall udev rule if missing, not debounced, has placeholders, still
-    # uses the fixed --unit name, or is still keyed on Mains (AC0 flaps).
-    if [[ ! -f "$debounce_rule" ]] \
-        || ! grep -q 'debounced' "$debounce_rule" 2>/dev/null \
-        || grep -q '__HOME__' "$debounce_rule" 2>/dev/null \
-        || ! grep -q 'KERNEL=="BAT\*"' "$debounce_rule" 2>/dev/null \
-        || grep '^SUBSYSTEM' "$debounce_rule" 2>/dev/null | grep -q 'unit=omarchy-power-profile'; then
-        info "Installing debounced udev rule (battery-keyed, overrides Omarchy default)..."
-        local tmpfile
-        tmpfile=$(mktemp)
-        sed "s|__HOME__|$HOME|g" "$SCRIPT_DIR/templates/99-power-profile.rules" > "$tmpfile"
-        run_sudo cp "$tmpfile" "$debounce_rule"
-        rm -f "$tmpfile"
-        run_sudo udevadm control --reload-rules
-        success "Debounced udev rule installed."
+    if [[ ${#removed_files[@]} -gt 0 ]]; then
+        info "Removing retired power-profile helpers..."
+        for f in "${removed_files[@]}"; do
+            run_cmd rm -f "$f"
+        done
+        success "Retired helpers removed."
     fi
 
-    # Wi-Fi power-save rule: Omarchy's version is Mains-keyed and therefore
-    # inherits the AC0 flap, toggling Wi-Fi power save every 1-3 seconds while
-    # charging. Re-key it onto the battery. A single rule fires a wrapper that
-    # reads the settled BAT0.status itself, because matching ATTR{status}
-    # directly in udev races the transition.
-    local wifi_wrapper="$HOME/.local/bin/z13-wifi-powersave-auto"
-    if [[ ! -x "$wifi_wrapper" ]]; then
-        info "Installing battery-keyed wifi-powersave wrapper..."
-        mkdir -p "$HOME/.local/bin"
-        cp "$SCRIPT_DIR/templates/z13-wifi-powersave-auto.sh" "$wifi_wrapper"
-        chmod +x "$wifi_wrapper"
-        success "Wi-Fi power-save wrapper installed."
-    fi
-
-    if [[ ! -f "$wifi_rule" ]] \
-        || grep -q '__HOME__' "$wifi_rule" 2>/dev/null \
-        || ! grep -q 'KERNEL=="BAT\*"' "$wifi_rule" 2>/dev/null \
-        || grep '^SUBSYSTEM' "$wifi_rule" 2>/dev/null | grep -q 'ATTR{status}' \
-        || grep '^SUBSYSTEM' "$wifi_rule" 2>/dev/null | grep -q 'unit=omarchy-wifi-powersave'; then
-        info "Installing battery-keyed wifi-powersave rule..."
-        local wifi_tmp
-        wifi_tmp=$(mktemp)
-        sed "s|__HOME__|$HOME|g" "$SCRIPT_DIR/templates/99-wifi-powersave.rules" > "$wifi_tmp"
-        run_sudo cp "$wifi_tmp" "$wifi_rule"
-        rm -f "$wifi_tmp"
-        run_sudo udevadm control --reload-rules
-        success "Wi-Fi power-save rule installed."
-    fi
-
-    # Reinstall post-update hook if missing, or is an older version that only
-    # handled the --unit name and not the Mains -> battery re-keying.
-    if [[ ! -f "$debounce_hook" ]] \
-        || ! grep -q 'Re-keying' "$debounce_hook" 2>/dev/null; then
-        info "Installing post-update hook (survives Omarchy updates)..."
-        mkdir -p "$(dirname "$debounce_hook")"
-        cp "$SCRIPT_DIR/templates/z13-power-profile-debounce-hook.sh" "$debounce_hook"
-        chmod +x "$debounce_hook"
-        success "Post-update hook installed."
+    if [[ ${#removed_rules[@]} -eq 0 && ${#removed_root_files[@]} -eq 0 && ${#removed_files[@]} -eq 0 ]]; then
+        success "No legacy power-profile machinery present."
     fi
 
     # HDMI audio: Enable auto-profile for AMD HDMI controller
