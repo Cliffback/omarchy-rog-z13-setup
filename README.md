@@ -203,7 +203,7 @@ lib/
   phase11_controller_gaming.sh Controller gaming mode trigger
   phase12_audio_routing.sh     Audio sink priority routing
   phase13_hibernate_wake.sh    Hibernate wake fix (GPIO workaround)
-  phase14_lychee_scaling.sh    Lychee Slicer DPI scaling fix
+  phase14_lychee.sh            Lychee Slicer install + desktop integration
   phase15_orca_scaling.sh      Orca Bambu Studio DPI scaling fix
   phase16_bambu_scaling.sh     Bambu Studio DPI scaling fix
   phase17_unreal_engine.sh     Unreal Engine 5 installer + Neovim integration
