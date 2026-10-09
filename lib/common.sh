@@ -87,6 +87,85 @@ file_contains() {
 # Command existence check
 has_command() { command -v "$1" &>/dev/null; }
 
+# ── Desktop entry helpers ────────────────────────────────────────────────
+
+# Echo the packaged .desktop path for a package (first match under
+# /usr/share/applications). Emits nothing if the package ships none.
+packaged_desktop() {
+    local pkg="$1" path
+    path=$(pacman -Ql "$pkg" 2>/dev/null \
+        | awk '/ \/usr\/share\/applications\/[^/]+\.desktop$/ {print $2; exit}')
+    [[ -n "$path" && -f "$path" ]] && printf '%s\n' "$path"
+    return 0
+}
+
+# Echo the executable referenced by a .desktop file's Exec= line (first token,
+# field codes such as %U/%f stripped). Packages rename these freely, so resolve
+# from the installed package rather than hardcoding a path.
+desktop_exec_bin() {
+    local desktop="$1" line
+    line=$(grep -m1 '^Exec=' "$desktop" 2>/dev/null) || return 1
+    line=${line#Exec=}
+    # shellcheck disable=SC2086
+    set -- $line
+    printf '%s\n' "${1:-}"
+}
+
+# Derive a per-user .desktop override from the packaged entry: replace only the
+# Exec= line (pointing it at <launcher>) and force Terminal=false, preserving
+# MimeType/Icon/StartupWMClass so Open-With registration keeps tracking upstream.
+# Optional [icon] forces an icon name (for packaging bugs). Refreshes the
+# desktop database afterwards. Usage:
+#   deploy_scaled_desktop <packaged_desktop> <launcher> <dest> [icon]
+deploy_scaled_desktop() {
+    local src="$1" launcher="$2" dest="$3" icon="${4:-}"
+    [[ -f "$src" ]] || return 1
+
+    if [[ $DRY_RUN -eq 1 ]]; then
+        info "[DRY-RUN] would derive $dest from $src (Exec=${launcher} %U${icon:+, Icon=$icon})"
+        return 0
+    fi
+
+    local content repl
+    repl=${launcher//\\/\\\\}; repl=${repl//&/\\&}; repl=${repl//|/\\|}
+    content=$(sed -e "s|^Exec=.*|Exec=${repl} %U|" -e '/^Terminal=/d' "$src")
+    [[ -n "$icon" ]] && content=$(printf '%s\n' "$content" | sed -e "s|^Icon=.*|Icon=${icon}|")
+    content="${content}
+Terminal=false"
+
+    mkdir -p "$(dirname "$dest")"
+    printf '%s\n' "$content" > "$dest"
+    update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
+}
+
+# Ensure every MIME type in a ';'-separated list appears on the MimeType= line of
+# a .desktop file, appending any that are missing. Keeps a fallback handler
+# (e.g. Orca for bambustudio:// URIs) registered when upstream stops declaring
+# the type. Usage: desktop_ensure_mimetypes <desktop> <mime;mime;...>
+desktop_ensure_mimetypes() {
+    local dest="$1" add="$2"
+    [[ -f "$dest" ]] || return 1
+
+    if [[ $DRY_RUN -eq 1 ]]; then
+        info "[DRY-RUN] would ensure MimeType on $dest includes: $add"
+        return 0
+    fi
+
+    local current merged mime
+    current=$(grep -m1 '^MimeType=' "$dest" 2>/dev/null | cut -d= -f2-)
+    merged="${current%;}"
+    IFS=';' read -ra _mimes <<< "$add"
+    for mime in "${_mimes[@]}"; do
+        [[ -z "$mime" ]] && continue
+        case ";${merged};" in
+            *";${mime};"*) ;;
+            *) merged="${merged};${mime}" ;;
+        esac
+    done
+    sed -i "s|^MimeType=.*|MimeType=${merged};|" "$dest"
+    update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
+}
+
 # Check if gamescope has cap_sys_nice capability
 has_gamescope_caps() {
     local gs_bin

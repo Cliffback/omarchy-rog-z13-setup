@@ -30,7 +30,8 @@ phase19_check() {
     fi
 
     if [[ ! -f "$CHITUBOX_DESKTOP" ]] \
-        || ! grep -q 'chitubox-scaled' "$CHITUBOX_DESKTOP" 2>/dev/null; then
+        || ! grep -q 'chitubox-scaled' "$CHITUBOX_DESKTOP" 2>/dev/null \
+        || ! grep -q '^MimeType=' "$CHITUBOX_DESKTOP" 2>/dev/null; then
         return 1
     fi
 
@@ -110,22 +111,18 @@ LAUNCHER
     run_cmd chmod +x "$CHITUBOX_LAUNCHER"
     success "Launcher installed at $CHITUBOX_LAUNCHER"
 
-    # Shadow the system .desktop entry (fixes broken icon name too)
-    run_cmd tee "$CHITUBOX_DESKTOP" > /dev/null << EOF
-[Desktop Entry]
-Name=CHITUBOX Basic
-GenericName=3D Printer Slicer
-Comment=All-in-one SLA/DLP/LCD Slicer
-Exec=${CHITUBOX_LAUNCHER} %f
-Icon=chitubox-basic
-Type=Application
-Terminal=false
-Categories=Graphics;Utility;
-MimeType=model/chitubox;model/ctb;model/cbddlp;model/stl
-EOF
-    success "Desktop entry created at $CHITUBOX_DESKTOP"
+    # Shadow the packaged entry, replacing only Exec= (preserves MimeType etc.).
+    # The package ships Icon=chitubox-free, but only chitubox-basic.png exists,
+    # so force the icon name.
+    local chitubox_src
+    chitubox_src=$(packaged_desktop "$CHITUBOX_PKG") || true
+    [[ -z "$chitubox_src" ]] && chitubox_src="/usr/share/applications/chitubox-basic.desktop"
+    if deploy_scaled_desktop "$chitubox_src" "$CHITUBOX_LAUNCHER" "$CHITUBOX_DESKTOP" "chitubox-basic"; then
+        success "Desktop entry created at $CHITUBOX_DESKTOP"
+    else
+        warn "Could not derive desktop entry from $chitubox_src"
+    fi
 
-    run_cmd update-desktop-database "$HOME/.local/share/applications" 2>/dev/null
     success "CHITUBOX Basic installed and scaling configured."
 
     # ── ChituManager ────────────────────────────────────────────────────
