@@ -43,6 +43,7 @@ phase8_run() {
 
         local override_content="[Service]
 Environment=\"OLLAMA_VULKAN=1\"
+Environment=\"OLLAMA_IGPU_ENABLE=1\"
 Environment=\"OLLAMA_FLASH_ATTENTION=1\"
 Environment=\"OLLAMA_HOST=$ollama_host\"
 Environment=\"OLLAMA_CONTEXT_LENGTH=262144\"
