@@ -32,7 +32,7 @@ phase15_check() {
 
     [[ -f "$ORCA_LAUNCHER" ]] \
         && grep -q 'GDK_DPI_SCALE' "$ORCA_LAUNCHER" 2>/dev/null \
-        && grep -q '0.8' "$ORCA_LAUNCHER" 2>/dev/null || return 1
+        && grep -q 'hyprctl monitors' "$ORCA_LAUNCHER" 2>/dev/null || return 1
 
     [[ -f "$ORCA_DESKTOP" ]] \
         && grep -q 'orca-scaled' "$ORCA_DESKTOP" 2>/dev/null \
@@ -86,22 +86,48 @@ phase15_run() {
     [[ -f /usr/lib/libsharpyuv.so ]] && preload="LD_PRELOAD=/usr/lib/libsharpyuv.so "
 
     info "Applying DPI scaling fix for Orca Studio..."
-    info "Setting GDK_DPI_SCALE=0.8 to compensate for oversized UI"
+    info "Deriving GDK scale from the focused Hyprland monitor at launch"
 
     mkdir -p "$(dirname "$ORCA_LAUNCHER")"
 
-    # Create launcher script (binary path resolved from the package above)
-    run_cmd tee "$ORCA_LAUNCHER" > /dev/null << LAUNCHER
+    # Build the launcher. X11 is forced for smooth rendering, and Hyprland runs
+    # with xwayland:force_zero_scaling, so the compositor does not scale the
+    # window — the launcher must derive GDK_SCALE/GDK_DPI_SCALE from the focused
+    # monitor itself. Placeholders keep the heredoc literal, then the resolved
+    # binary is substituted in.
+    local launcher
+    launcher=$(cat << 'LAUNCHER'
 #!/bin/bash
 # Orca Studio launcher with DPI-corrected scaling.
-# Orca's wxWidgets UI is inherently oversized on Wayland.
-# GDK_DPI_SCALE=0.8 compensates across all displays.
+# X11 is forced for smooth rendering; with xwayland:force_zero_scaling the
+# compositor does not scale us, so derive the GTK scale from the focused monitor.
+# Override the target scale with ORCA_SCALE.
 
-export GDK_DPI_SCALE=0.8
+SCALE="${ORCA_SCALE:-$(hyprctl monitors -j 2>/dev/null | python3 -c '
+import json, sys
+try:
+    monitors = json.load(sys.stdin)
+except Exception:
+    monitors = []
+active = next((m for m in monitors if m.get("focused")), monitors[0] if monitors else {})
+print(active.get("scale", 1))
+')}"
+[[ -n "$SCALE" ]] || SCALE=1
+read -r _gdk_scale _gdk_dpi < <(python3 -c "
+s = float('$SCALE')
+g = max(1, int(s + 0.5))
+print(g, s / g)
+")
+export GDK_SCALE="$_gdk_scale"
+export GDK_DPI_SCALE="$_gdk_dpi"
 export GDK_BACKEND=x11
-ORCA_BINARY=${orca_bin}
-exec env ${preload}"\$ORCA_BINARY" "\$@"
+ORCA_BINARY=__ORCA_BINARY__
+exec env __ORCA_PRELOAD__"$ORCA_BINARY" "$@"
 LAUNCHER
+)
+    launcher=${launcher//__ORCA_BINARY__/$orca_bin}
+    launcher=${launcher//__ORCA_PRELOAD__/$preload}
+    printf '%s\n' "$launcher" | run_cmd tee "$ORCA_LAUNCHER" > /dev/null
     run_cmd chmod +x "$ORCA_LAUNCHER"
     success "Launcher installed at $ORCA_LAUNCHER"
 

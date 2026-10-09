@@ -16,7 +16,7 @@ phase16_check() {
 
     [[ -f "$BAMBU_LAUNCHER" ]] \
         && grep -q 'GDK_DPI_SCALE' "$BAMBU_LAUNCHER" 2>/dev/null \
-        && grep -q '0.8' "$BAMBU_LAUNCHER" 2>/dev/null || return 1
+        && grep -q 'hyprctl monitors' "$BAMBU_LAUNCHER" 2>/dev/null || return 1
 
     # The override must declare MimeType: without it this entry shadows the
     # packaged one and Bambu Studio vanishes from the file manager's Open-With.
@@ -63,22 +63,46 @@ phase16_run() {
     fi
 
     info "Applying DPI scaling fix for Bambu Studio..."
-    info "Setting GDK_DPI_SCALE=0.8 to compensate for oversized UI"
+    info "Deriving GDK scale from the focused Hyprland monitor at launch"
 
     mkdir -p "$(dirname "$BAMBU_LAUNCHER")"
 
-    # Create launcher script
-    run_cmd tee "$BAMBU_LAUNCHER" > /dev/null << LAUNCHER
+    # Build the launcher. X11 is forced for smooth rendering, and Hyprland runs
+    # with xwayland:force_zero_scaling, so the compositor does not scale the
+    # window — the launcher must derive GDK_SCALE/GDK_DPI_SCALE from the focused
+    # monitor itself.
+    local launcher
+    launcher=$(cat << 'LAUNCHER'
 #!/bin/bash
 # Bambu Studio launcher with DPI-corrected scaling.
-# Bambu Studio's wxWidgets UI is inherently oversized on Wayland.
-# GDK_DPI_SCALE=0.8 compensates across all displays.
+# X11 is forced for smooth rendering; with xwayland:force_zero_scaling the
+# compositor does not scale us, so derive the GTK scale from the focused monitor.
+# Override the target scale with BAMBU_SCALE.
 
-export GDK_DPI_SCALE=0.8
+SCALE="${BAMBU_SCALE:-$(hyprctl monitors -j 2>/dev/null | python3 -c '
+import json, sys
+try:
+    monitors = json.load(sys.stdin)
+except Exception:
+    monitors = []
+active = next((m for m in monitors if m.get("focused")), monitors[0] if monitors else {})
+print(active.get("scale", 1))
+')}"
+[[ -n "$SCALE" ]] || SCALE=1
+read -r _gdk_scale _gdk_dpi < <(python3 -c "
+s = float('$SCALE')
+g = max(1, int(s + 0.5))
+print(g, s / g)
+")
+export GDK_SCALE="$_gdk_scale"
+export GDK_DPI_SCALE="$_gdk_dpi"
 export GDK_BACKEND=x11
-BAMBU_BINARY=${BAMBU_BIN}
-exec "\$BAMBU_BINARY" "\$@"
+BAMBU_BINARY=__BAMBU_BINARY__
+exec "$BAMBU_BINARY" "$@"
 LAUNCHER
+)
+    launcher=${launcher//__BAMBU_BINARY__/$BAMBU_BIN}
+    printf '%s\n' "$launcher" | run_cmd tee "$BAMBU_LAUNCHER" > /dev/null
     run_cmd chmod +x "$BAMBU_LAUNCHER"
     success "Launcher installed at $BAMBU_LAUNCHER"
 
