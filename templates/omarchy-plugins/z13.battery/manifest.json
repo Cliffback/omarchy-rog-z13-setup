@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "z13.battery",
+  "name": "Z13 Battery",
+  "version": "1.0.0",
+  "author": "omarchy-rog-z13-setup",
+  "description": "Low battery warning service, with the AC/battery power-profile switch debounced against the Z13's flapping AC line",
+  "kinds": [
+    "service"
+  ],
+  "entryPoints": {
+    "service": "Service.qml"
+  },
+  "omarchy": {
+    "clonedFrom": "omarchy.battery"
+  }
+}
