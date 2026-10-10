@@ -43,9 +43,14 @@ before the upgrade. See the packaged `add-custom-repo.sample` there.
 `/boot/limine.conf`:
 
 ```
+timeout: 3
 default_entry: Omarchy/linux-cachyos
 ```
 
-Path form (uses entry titles), so it survives kernel entry renumbering. Set
-2026-10-10. Note: `omarchy refresh limine` resets this file to the template
-(`default_entry: 2`); re-apply after if you ever run it.
+`default_entry` uses the path form (entry titles), so it survives kernel entry
+renumbering. `timeout: 3` autoboots the default after 3s (any keypress stops the
+countdown to show the menu). Set 2026-10-10.
+
+Note: `omarchy refresh limine` resets this file to the template
+(`default_entry: 2`, `timeout` commented out → no autoboot); re-apply both after
+if you ever run it.
