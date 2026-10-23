@@ -50,7 +50,7 @@ Also fixes an audio issue where speakers go silent after plugging/unplugging hea
 
 Additionally initializes the speaker amplifier mixer (ALC294 + CS35L41) and enables HDMI audio auto-profile for AMD HDMI controllers so external monitors appear as audio output devices.
 
-This phase also removes the retired Z13 power-profile churn machinery (the battery-keyed `99-power-profile.rules` / `99-wifi-powersave.rules` udev rules, the debounced profile wrapper, the Wi-Fi power-save wrapper, and the post-update hook). Under Omarchy 4 (Quattro) profile switching moved into Quickshell and no longer inherits the AC0 flap, so the workaround is obsolete — and broken, since `~/.local/share/omarchy` is now a symlink to root-owned `/usr/share/omarchy`. See [docs/z13-power-profile-churn-fix.md](docs/z13-power-profile-churn-fix.md).
+This phase also retires the old Z13 power-profile churn machinery (the battery-keyed `99-power-profile.rules` / `99-wifi-powersave.rules` udev rules, the Wi-Fi power-save wrapper, the post-update hook, and the earlier `z13.battery`/`z13.lock` service clones) and installs the current fix: a debounced `omarchy-powerprofiles-set` wrapper at `~/.local/bin/omarchy-powerprofiles-set`. The Z13's EC flaps `AC0.online` while charging — a few times per few minutes near full charge, and at ~1 Hz under heavy load on an under-rated 140 W supply — and Omarchy 4's shell turns each flap into a profile switch. The wrapper keys on `BAT0.status` and only acts once the source has settled; Phase 4's `z13.lua` puts `~/.local/bin` ahead of `/usr/share/omarchy/bin` on the compositor PATH. No udev, no root, no `RUN+=`. See [docs/z13-power-profile-churn-fix.md](docs/z13-power-profile-churn-fix.md).
 
 **Phase 4 - Hyprland configuration**
 

@@ -1,0 +1,207 @@
+#!/bin/bash
+# Debounced user wrapper around Omarchy's omarchy-powerprofiles-set.
+#
+# Why this exists
+# ---------------
+# The ROG Flow Z13's embedded controller reports spurious line-power state. On
+# this machine AC0.online (and therefore UPower.onBattery) flaps:
+#   * a few times per few minutes while charging near the top of the range, and
+#   * at roughly 1 Hz under heavy load while charging on an under-rated supply
+#     (a 140 W SlimQ, where the Z13 ships with a 200 W adapter).
+#
+# Omarchy 4's omarchy.battery service calls omarchy-powerprofiles-set on every
+# UPower.onBatteryChanged. Each flap therefore flipped the platform profile
+# Performance <-> Balanced, and asusd rewrote the fan curve on every flip.
+#
+# This wrapper keys on BAT0.status (actual power flow) instead of UPower's
+# line-power view, and only acts once that reading has settled. A flap that
+# returns to where it started never changes the profile; a real plug/unplug is
+# applied after the settle window. During a sustained flap storm nothing
+# settles, so the wrapper leaves the profile alone rather than churning it.
+#
+# It lives in ~/.local/bin and is put ahead of /usr/share/omarchy/bin on the
+# compositor's PATH by ~/.config/hypr/z13.lua, so the shell, session autostart
+# and DeckShift all resolve it. No udev rule, no root, no RUN+=.
+#
+# upstream is /usr/bin/omarchy-powerprofiles-set (the packaged script). This
+# wrapper never edits that file, so Omarchy updates are safe.
+
+set -u
+
+ORIG_SCRIPT="/usr/bin/omarchy-powerprofiles-set"
+
+# Wait-for-stability: require STABLE_READS consecutive agreeing readings,
+# polling every INTERVAL seconds, giving up after MAX_SAMPLES reads. A mismatch
+# restarts the window rather than aborting, so a mid-transition start converges
+# on the settled value; an unrecognised reading (e.g. "Unknown" during a
+# transition) also restarts it.
+STABLE_READS=2
+INTERVAL=1
+MAX_SAMPLES=6
+
+# Atomic deduplication: only one instance may proceed. mkdir is atomic, so an
+# event burst collapses to a single evaluation instead of a thundering herd.
+# A crashed run can leave the sentinel behind; reclaim it once it is stale.
+RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+PROCESSING="${RUNTIME_DIR}/z13-powerprofiles.processing"
+mkdir -p "$RUNTIME_DIR" 2>/dev/null || true
+
+if ! mkdir "$PROCESSING" 2>/dev/null; then
+    if [[ -d $PROCESSING ]]; then
+        age=$(( $(date +%s) - $(stat -c %Y "$PROCESSING" 2>/dev/null || echo 0) ))
+        if (( age > 30 )); then
+            rmdir "$PROCESSING" 2>/dev/null
+            mkdir "$PROCESSING" 2>/dev/null || exit 0
+        else
+            exit 0
+        fi
+    else
+        exit 0
+    fi
+fi
+cleanup() { rmdir "$PROCESSING" 2>/dev/null || true; }
+trap cleanup EXIT
+
+log() { logger -t z13-powerprofiles "$*" 2>/dev/null || true; }
+
+# ---------------------------------------------------------------------------
+# Resolve the real power source from BAT0.status.
+# ---------------------------------------------------------------------------
+
+# Locate the system battery: type=Battery, excluding peripherals (scope=Device,
+# e.g. the Elan touchpad's hid-...-battery-7, which reports capacity 0).
+find_system_battery() {
+    local ps scope
+    for ps in /sys/class/power_supply/*; do
+        [[ -r $ps/type && -r $ps/status ]] || continue
+        [[ $(cat "$ps/type") == Battery ]] || continue
+        scope=$(cat "$ps/scope" 2>/dev/null || echo "")
+        [[ $scope == Device ]] && continue
+        printf '%s\n' "$ps"
+        return 0
+    done
+    return 1
+}
+
+# Map BAT0.status to an action. Returns non-zero on an inconclusive reading so
+# the caller retries.
+read_battery_action() {
+    local status
+    status=$(cat "$1/status" 2>/dev/null) || return 1
+    case "$status" in
+        Discharging)                  echo battery ;;
+        Charging|"Not charging"|Full) echo ac ;;
+        *)                            return 1 ;;
+    esac
+}
+
+# Fallback for machines without a readable system battery: treat any Mains or
+# USB supply reporting online=1 as AC.
+read_ac_action() {
+    local found=0 ps type
+    for ps in /sys/class/power_supply/*; do
+        [[ -r $ps/online && -r $ps/type ]] || continue
+        type=$(cat "$ps/type")
+        [[ $type == Mains || $type == USB ]] || continue
+        if [[ $(cat "$ps/online") == 1 ]]; then
+            found=1
+            break
+        fi
+    done
+    [[ $found == 1 ]] && echo ac || echo battery
+}
+
+detect_action() {
+    local bat
+    if bat=$(find_system_battery); then
+        read_battery_action "$bat"
+    else
+        read_ac_action
+    fi
+}
+
+settle_action() {
+    local current prev="" agree=0 i action=""
+    for (( i = 0; i < MAX_SAMPLES; i++ )); do
+        if current=$(detect_action); then
+            if [[ -n $prev && $current == "$prev" ]]; then
+                agree=$((agree + 1))
+                if (( agree >= STABLE_READS - 1 )); then
+                    action="$current"
+                    break
+                fi
+            else
+                agree=0
+            fi
+            prev="$current"
+        else
+            prev=""
+            agree=0
+        fi
+        sleep "$INTERVAL"
+    done
+    printf '%s\n' "$action"
+}
+
+# ---------------------------------------------------------------------------
+# Argument handling.
+# ---------------------------------------------------------------------------
+# Callers:
+#   omarchy.battery service : omarchy-powerprofiles-set ac|battery
+#   power panel             : omarchy-powerprofiles-set ac|battery <profile>
+#   menu / DeckShift        : omarchy-powerprofiles-set autodetect <profile>
+#   omarchy-powerprofiles-init : omarchy-powerprofiles-set autodetect
+
+if (( $# > 2 )); then
+    # Let the real script print its usage error.
+    exec "$ORIG_SCRIPT" "$@"
+fi
+
+action_arg="${1:-autodetect}"
+profile_arg="${2:-}"
+
+action=$(settle_action)
+
+if [[ -z $action ]]; then
+    if [[ -n $profile_arg ]]; then
+        # An explicit profile pick must not be dropped just because the line is
+        # flapping: fall back to the caller's action, then to a single reading.
+        case "$action_arg" in
+            ac|battery) action="$action_arg" ;;
+            *)          action=$(detect_action) || action="autodetect" ;;
+        esac
+        log "explicit profile '$profile_arg' during unsettled power; using $action"
+    else
+        log "power source did not settle; leaving profile unchanged"
+        exit 0
+    fi
+fi
+
+if [[ -n $profile_arg ]]; then
+    log "applying explicit profile '$profile_arg' for $action"
+    exec "$ORIG_SCRIPT" "$action" "$profile_arg"
+fi
+
+# Idempotency: skip when the profile for this action is already active. This
+# prevents a redundant powerprofilesctl set (and asusd fan-curve rewrite) when
+# the settled source maps to the profile already in use.
+state_dir="${OMARCHY_POWERPROFILES_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/powerprofiles}"
+state_file="$state_dir/$action"
+target=""
+[[ -r $state_file ]] && target=$(<"$state_file")
+if [[ -z $target ]]; then
+    if [[ $action == ac ]] && powerprofilesctl list 2>/dev/null | grep -q 'performance'; then
+        target=performance
+    else
+        target=balanced
+    fi
+fi
+
+current=$(powerprofilesctl get 2>/dev/null || true)
+if [[ -n $current && $current == "$target" ]]; then
+    log "settled on $action; profile already $target"
+    exit 0
+fi
+
+log "settled on $action; applying $( [[ -n $target ]] && echo "$target" || echo "state-file profile" )"
+exec "$ORIG_SCRIPT" "$action"

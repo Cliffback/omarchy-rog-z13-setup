@@ -4,12 +4,12 @@
 # The EC toggles AC0.online spuriously while charging: a few flaps every few
 # minutes near full charge, and under heavy load (BAT0.status and
 # UPower.onBattery flap with it). Omarchy 4's battery service switched the
-# platform profile on every UPower.onBattery change. The repo replaces it with
-# z13.battery, which applies the switch only after onBattery has been stable for
-# 5 s.
+# platform profile on every UPower.onBattery change. The repo installs a
+# debounced omarchy-powerprofiles-set wrapper (BAT0.status-keyed, settled
+# source), which keeps the built-in service.
 #
 # Two distinct churn paths, and the report keeps them apart:
-#   1. PROFILE churn — Quickshell reacts to onBattery. This is what z13.battery
+#   1. PROFILE churn — Quickshell reacts to onBattery. This is what the wrapper
 #      debounces. Pass = ~0 profile changes.
 #   2. FAN-CURVE churn — asusd rewrites the fan curve on every AC-line notify
 #      ("External power supply state changed"), even when it does NOT change the
@@ -69,18 +69,16 @@ count_fan_curves() { count_since_start "write_profile_curve_to_platform"; }
 
 count_ppd() { count_since_start "omarchy-powerprofiles-set"; }
 
-# z13.battery logs each decision via logger -t z13-battery: "applying profile"
-# for a settled real change, "left unchanged" for a flap that returned to where
-# it started within the settle window.
-count_z13_applied()   { count_since_start "z13-battery.*applying profile"; }
-count_z13_absorbed()  { count_since_start "z13-battery.*left unchanged"; }
+# The wrapper logs each decision via logger -t z13-powerprofiles: "settled on
+# ...; applying" for a real change, "leaving profile unchanged" when a storm
+# never settles, and "profile already" for a no-op.
+count_z13_applied()   { count_since_start "z13-powerprofiles.*applying"; }
+count_z13_absorbed()  { count_since_start "z13-powerprofiles.*leaving profile unchanged"; }
 
-# Which shell service owns AC/battery profile switching right now.
+# Which profile-switch path owns AC/battery right now.
 battery_service() {
-  local cfg="$HOME/.config/omarchy/shell.json"
-  if [[ -f $cfg ]] && jq -e 'any(.plugins[]?; .id == "z13.battery")
-       and any(.disabledPlugins[]?; . == "omarchy.battery")' "$cfg" >/dev/null 2>&1; then
-    echo "z13.battery (debounced)"
+  if [[ -x $HOME/.local/bin/omarchy-powerprofiles-set ]]; then
+    echo "omarchy.battery + debounced wrapper"
   else
     echo "omarchy.battery (undebounced)"
   fi
@@ -298,10 +296,10 @@ print_report() {
   echo "count: $fan_curves  (expected ~2 per AC event: CPU + GPU)"
   echo
 
-  echo "--- z13.battery decisions ---"
-  echo "service:               $(battery_service)"
-  echo "applied (real change): $(count_z13_applied)"
-  echo "absorbed (flap):       $(count_z13_absorbed)"
+  echo "--- debounce wrapper decisions ---"
+  echo "path:                     $(battery_service)"
+  echo "applied (incl. explicit): $(count_z13_applied)"
+  echo "absorbed (storm):         $(count_z13_absorbed)"
   echo
 
   echo "=========================================================="
@@ -328,11 +326,11 @@ print_report() {
     fi
   else
     echo "Profile churned ($profile_changes changes) — the debounce is not holding."
-    if [[ $(battery_service) == omarchy.battery* ]]; then
-      echo "-> z13.battery is not active. Run phase 3 of install.sh, then"
-      echo "   omarchy-restart-shell, and confirm: journalctl -b -t z13-battery"
+    if [[ $(battery_service) == *undebounced* ]]; then
+      echo "-> The wrapper is not installed. Run phase 3 of install.sh, then"
+      echo "   omarchy-restart-shell, and confirm: journalctl -b -t z13-powerprofiles"
     else
-      echo "-> z13.battery is enabled but something else is switching profiles."
+      echo "-> The wrapper is installed but something else is switching profiles."
       echo "   Check DeckShift, Fn+F5, asusd change_platform_profile_on_*."
     fi
   fi
@@ -379,9 +377,9 @@ cmd_status() {
   printf 'profile changes:            %s\n' "$(count_events 'EVENT profile')"
   printf 'governor changes:           %s\n' "$(count_events 'EVENT governor')"
   printf 'asusd fan-curve writes:     %s\n' "$(count_fan_curves)"
-  printf 'z13.battery applied:        %s\n' "$(count_z13_applied)"
-  printf 'z13.battery absorbed:       %s\n' "$(count_z13_absorbed)"
-  printf 'battery service:            %s\n' "$(battery_service)"
+  printf 'wrapper applied:            %s\n' "$(count_z13_applied)"
+  printf 'wrapper absorbed:           %s\n' "$(count_z13_absorbed)"
+  printf 'switch path:                %s\n' "$(battery_service)"
   echo
   if [[ -f $PIDFILE ]] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
     echo "monitor: running (pid $(cat "$PIDFILE"))"

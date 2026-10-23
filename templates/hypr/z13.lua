@@ -109,3 +109,22 @@ o.window("org.omarchy.omarchy-vpn", { tag = "+floating-window" })
 
 -- Silence the fcitx5 Wayland diagnose warning.
 hl.env("FCITX_NO_WAYLAND_DIAGNOSE", "1")
+
+-- ── PATH ────────────────────────────────────────────────────────────────────
+--
+-- Omarchy's default/hypr/envs.lua puts $OMARCHY_PATH/bin first on the
+-- compositor's PATH, so a user override in ~/.local/bin would never be found.
+-- Re-prepend ~/.local/bin (this module loads after envs.lua, so it wins) so
+-- ~/.local/bin/omarchy-powerprofiles-set shadows the packaged script for the
+-- shell, session autostart and DeckShift. That wrapper debounces the Z13's
+-- flapping AC line before switching profiles; see
+-- docs/z13-power-profile-churn-fix.md. Dedupe so reloads don't grow PATH.
+local pp_bin = home .. "/.local/bin"
+local pp_path = {}
+for pp_entry in ((os.getenv("PATH") or "/usr/local/bin:/usr/bin") .. ":"):gmatch("([^:]*):") do
+  if pp_entry ~= "" and pp_entry ~= pp_bin then
+    table.insert(pp_path, pp_entry)
+  end
+end
+table.insert(pp_path, 1, pp_bin)
+hl.env("PATH", table.concat(pp_path, ":"))

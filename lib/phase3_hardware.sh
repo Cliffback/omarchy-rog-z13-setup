@@ -14,41 +14,6 @@ iio_hyprland_is_lua_capable() {
         && strings /usr/bin/iio-hyprland 2>/dev/null | grep -q 'hyprctl eval'
 }
 
-# Debounced clone of Omarchy's omarchy.battery shell service (see phase3_run).
-Z13_BATTERY_ID="z13.battery"
-Z13_BATTERY_SRC="$SCRIPT_DIR/templates/omarchy-plugins/$Z13_BATTERY_ID"
-Z13_BATTERY_DST="$HOME/.config/omarchy/plugins/$Z13_BATTERY_ID"
-Z13_BATTERY_UPSTREAM="$HOME/.local/share/omarchy/shell/plugins/services/battery"
-OMARCHY_SHELL_JSON="$HOME/.config/omarchy/shell.json"
-Z13_BATTERY_FILES=(manifest.json Service.qml BatteryModel.js)
-
-z13_battery_files_current() {
-    local f
-    for f in "${Z13_BATTERY_FILES[@]}"; do
-        cmp -s "$Z13_BATTERY_SRC/$f" "$Z13_BATTERY_DST/$f" || return 1
-    done
-}
-
-# Enabled = listed in plugins[] with the built-in recorded in disabledPlugins[],
-# which is exactly what `omarchy-plugin-enable` writes for a service clone.
-z13_battery_enabled() {
-    [[ -f $OMARCHY_SHELL_JSON ]] && jq -e --arg id "$Z13_BATTERY_ID" '
-        any(.plugins[]?; .id == $id)
-        and any(.disabledPlugins[]?; . == "omarchy.battery")
-    ' "$OMARCHY_SHELL_JSON" >/dev/null 2>&1
-}
-
-# The clone freezes upstream Service.qml/BatteryModel.js. Warn (don't fail) when
-# Omarchy ships a different revision so upstream fixes get folded back in.
-z13_battery_warn_upstream_drift() {
-    [[ -d $Z13_BATTERY_UPSTREAM ]] || return 0
-    if ! (cd "$Z13_BATTERY_UPSTREAM" && sha256sum --quiet -c "$Z13_BATTERY_SRC/upstream.sha256") &>/dev/null; then
-        warn "Omarchy's omarchy.battery service changed since z13.battery was cloned."
-        warn "Diff $Z13_BATTERY_UPSTREAM against $Z13_BATTERY_SRC, port upstream changes,"
-        warn "then refresh templates/omarchy-plugins/$Z13_BATTERY_ID/upstream.sha256."
-    fi
-}
-
 phase3_check() {
     # Check firmware packages are installed AND explicitly marked
     for pkg in "${FIRMWARE_PKGS[@]}"; do
@@ -68,67 +33,9 @@ phase3_check() {
         && [[ ! -f /etc/udev/rules.d/99-wifi-powersave.rules ]] \
         && [[ ! -f ~/.local/bin/z13-wifi-powersave-auto ]] \
         && [[ ! -f ~/.config/omarchy/hooks/post-update.d/z13-power-profile-debounce-hook.sh ]] \
-        && z13_battery_files_current \
-        && z13_battery_enabled
-}
-
-phase3_deploy_z13_battery() {
-    if [[ ! -d $Z13_BATTERY_UPSTREAM ]]; then
-        warn "Omarchy battery service not found ($Z13_BATTERY_UPSTREAM) — skipping z13.battery."
-        return 0
-    fi
-    z13_battery_warn_upstream_drift
-
-    local changed=0
-    if z13_battery_files_current; then
-        success "z13.battery plugin files up to date."
-    else
-        info "Installing debounced battery service to $Z13_BATTERY_DST..."
-        run_cmd mkdir -p "$Z13_BATTERY_DST"
-        local f
-        for f in "${Z13_BATTERY_FILES[@]}"; do
-            run_cmd cp "$Z13_BATTERY_SRC/$f" "$Z13_BATTERY_DST/$f"
-        done
-        success "z13.battery plugin files installed."
-        changed=1
-    fi
-
-    if z13_battery_enabled; then
-        success "z13.battery enabled (omarchy.battery disabled)."
-    elif [[ $DRY_RUN -eq 1 ]]; then
-        info "[DRY-RUN] would run: omarchy-shell shell rescanPlugins && omarchy-plugin-enable $Z13_BATTERY_ID"
-    elif ! has_command omarchy-plugin-enable; then
-        warn "omarchy-plugin-enable not found — enable manually: omarchy-plugin-enable $Z13_BATTERY_ID"
-        return 0
-    else
-        # Enabling goes through the running shell so it writes plugins[],
-        # disabledPlugins[] and cloneSourceRestores[] coherently; revert with
-        # `omarchy-plugin-disable z13.battery`.
-        omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
-        local attempt
-        for (( attempt = 0; attempt < 40; attempt++ )); do
-            omarchy-plugin-list --json 2>/dev/null \
-                | jq -e --arg id "$Z13_BATTERY_ID" 'any(.[]; .id == $id)' >/dev/null && break
-            sleep 0.1
-        done
-        if omarchy-plugin-enable "$Z13_BATTERY_ID" >/dev/null 2>&1 && z13_battery_enabled; then
-            success "z13.battery enabled; omarchy.battery disabled."
-            changed=1
-        else
-            warn "Could not enable z13.battery (is the Omarchy shell running?)."
-            warn "Run after login: omarchy-plugin-enable $Z13_BATTERY_ID && omarchy-restart-shell"
-            return 0
-        fi
-    fi
-
-    # The shell's live plugin reload does not re-instantiate a changed or newly
-    # enabled service; a restart does. Confirm it loaded with:
-    #   journalctl -b -t z13-battery
-    if (( changed )) && has_command omarchy-restart-shell; then
-        info "Restarting the Omarchy shell to load z13.battery..."
-        run_cmd omarchy-restart-shell >/dev/null \
-            || warn "Shell restart failed — run: omarchy-restart-shell"
-    fi
+        && [[ -x ~/.local/bin/omarchy-powerprofiles-set ]] \
+        && [[ ! -d ~/.config/omarchy/plugins/z13.battery ]] \
+        && [[ ! -d ~/.config/omarchy/plugins/z13.lock ]]
 }
 
 phase3_run() {
@@ -248,34 +155,32 @@ phase3_run() {
         warn "ALC294 codec not found — skipping mixer init"
     fi
 
-    # Power-profile churn fix (AC0 flap).
+    # Power-profile churn: legacy cleanup + the current user-level fix.
     #
-    # The EC on this machine toggles AC0.online 0 <-> 1 spuriously while
-    # charging, without an ACPI notify. Two regimes:
-    #   - mild: a few flaps every 3-4 min near full charge at light load;
-    #   - severe: ~1 Hz under heavy load while charging on the 140 W SlimQ
-    #     supply (stock is 200 W), with BAT0.status and UPower.onBattery
-    #     flapping in lockstep.
-    # Anything keyed on the AC line inherits it. Each flap flipped the profile
-    # Performance <-> Balanced, and asusd rewrote the fan curve every time
-    # (98 writes in one boot on 2026-10-10). Dropping to Balanced lowers draw,
-    # which plausibly re-stabilises AC0 and keeps the severe storm oscillating.
+    # The Z13's EC reports spurious line-power state. AC0.online — and therefore
+    # UPower.onBattery — flaps:
+    #   * a few times per few minutes while charging near the top of the range,
+    #   * at roughly 1 Hz under heavy load while charging on an under-rated
+    #     supply (a 140 W SlimQ; the Z13 ships with a 200 W adapter).
     #
-    # History: Omarchy 3 drove switching from udev rules; the fix re-keyed them
-    # onto BAT0.status behind a debounce wrapper. Quattro moved switching into
-    # Quickshell (omarchy.battery: UPower.onBatteryChanged ->
-    # omarchy-powerprofiles-set). A single 2026-09-16 charge window measured
-    # zero flaps, so the fix was retired; the flap is intermittent and that
-    # measurement missed it. BAT0.status is not a safe key either, because it
-    # also flaps under load.
+    # Omarchy 3 reacted in udev rules keyed on the Mains supply, which caused a
+    # profile set -> asusd fan-curve rewrite + notification + Wi-Fi power-save
+    # churn on every flap. Quattro moved the switch into Quickshell
+    # (plugins/services/battery/Service.qml watches UPower.onBatteryChanged and
+    # calls omarchy-powerprofiles-set). A 2026-09-16 measurement showed no flap
+    # and the old machinery was retired, but the flap returned: both the mild
+    # charging case and the load-while-charging storm flip the profile.
     #
-    # Current fix: z13.battery, a user-config clone of omarchy.battery whose
-    # profile switch fires only after UPower.onBattery has been stable for
-    # 15 s. It lives in ~/.config/omarchy/plugins, so it survives Omarchy
-    # updates and needs no root. omarchy-plugin-enable disables the built-in.
+    # The fix is now a user-level wrapper, ~/.local/bin/omarchy-powerprofiles-set,
+    # installed below. It keys on BAT0.status (actual power flow) and only acts
+    # once that has settled, so a flap that returns to where it started changes
+    # nothing and a sustained storm changes nothing. ~/.config/hypr/z13.lua
+    # (Phase 4) puts ~/.local/bin ahead of /usr/share/omarchy/bin on the
+    # compositor PATH so the shell, session autostart and DeckShift all resolve
+    # it. No udev rule, no root, no RUN+=.
     #
-    # The Omarchy 3 machinery is still removed below, because it would fail
-    # against root-owned /usr/share/omarchy.
+    # This step is deliberately unconditional and idempotent: re-running the repo
+    # removes any legacy udev/root machinery and refreshes the wrapper.
     local legacy_rules=(
         /etc/udev/rules.d/99-power-profile.rules
         /etc/udev/rules.d/99-power-profile.rules.omarchy-disabled
@@ -324,10 +229,44 @@ phase3_run() {
     fi
 
     if [[ ${#removed_rules[@]} -eq 0 && ${#removed_root_files[@]} -eq 0 && ${#removed_files[@]} -eq 0 ]]; then
-        success "No legacy power-profile machinery present."
+        success "No legacy power-profile udev machinery present."
     fi
 
-    phase3_deploy_z13_battery
+    # Retire the earlier clone-the-whole-service approach (z13.battery/z13.lock).
+    # Both forked a first-party shell service and drifted whenever Omarchy
+    # changed it; z13.lock is obsolete now that 4.0.6 routes the lock decisions
+    # through the fresh currentlyLocked() read, and z13.battery misses 4.5's
+    # cross-service powerSaverOnBattery property. Best effort: disable through
+    # the shell when it is running, then drop the plugin directory.
+    local legacy_clone
+    for legacy_clone in \
+        "$HOME/.config/omarchy/plugins/z13.battery" \
+        "$HOME/.config/omarchy/plugins/z13.lock"; do
+        [[ -e $legacy_clone ]] || continue
+        info "Removing retired service clone $(basename "$legacy_clone")..."
+        if has_command omarchy-plugin-disable; then
+            omarchy-plugin-disable "$(basename "$legacy_clone")" >/dev/null 2>&1 || true
+        fi
+        run_cmd rm -rf "$legacy_clone"
+        success "Retired clone $(basename "$legacy_clone") removed."
+    done
+
+    # Install the debounced power-profile wrapper. It shadows the packaged
+    # /usr/bin/omarchy-powerprofiles-set via the PATH prepend in z13.lua.
+    local pp_wrapper_src="$SCRIPT_DIR/templates/omarchy-powerprofiles-set-debounced"
+    local pp_wrapper_dst="$HOME/.local/bin/omarchy-powerprofiles-set"
+    if [[ -f $pp_wrapper_src ]]; then
+        if [[ ! -f $pp_wrapper_dst ]] || ! cmp -s "$pp_wrapper_src" "$pp_wrapper_dst"; then
+            info "Installing debounced omarchy-powerprofiles-set wrapper..."
+            run_cmd mkdir -p "$HOME/.local/bin"
+            run_cmd install -m 0755 "$pp_wrapper_src" "$pp_wrapper_dst"
+            success "Power-profile wrapper installed."
+        else
+            success "Power-profile wrapper up to date."
+        fi
+    else
+        warn "Power-profile wrapper template missing ($pp_wrapper_src)."
+    fi
 
     # HDMI audio: Enable auto-profile for AMD HDMI controller
     # Without this, WirePlumber leaves the HDMI audio card profile set to "off"
