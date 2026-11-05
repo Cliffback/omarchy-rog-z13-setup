@@ -28,7 +28,7 @@ In dry-run mode all prompts are auto-answered yes and commands are printed inste
 
 ## What it does
 
-The script runs eighteen phases in order:
+The script runs twenty-one phases in order (0–19, plus 2b):
 
 **Phase 0 - System update**
 
@@ -41,6 +41,10 @@ Adds the CachyOS and G14 (asus-linux.org) repositories to pacman.conf, resolves 
 **Phase 2 - asusd service fix**
 
 The asusd.service unit currently ships without an [Install] section, which prevents it from being enabled. This phase creates a systemd drop-in to add the missing section, then enables and starts the service.
+
+**Phase 2b - Fan curves (leave to the firmware)**
+
+Disables asusd's custom fan curves for Quiet, Balanced and Performance via `asusctl fan-curve --enable-fan-curves false`. On GZ302EA (BIOS 314) a custom curve was observed to pin the second fan at ~6300 RPM; controlled re-tests at warm idle did not reproduce it. The EC's per-profile tables are correct, and Balanced/Performance already ship with their curves off, so the repo keeps the custom curves off. The `custom` profile is left alone. See [docs/z13-fan-curve-gz302ea.md](docs/z13-fan-curve-gz302ea.md) for the measurements, the probe, and the reproduction status.
 
 **Phase 3 - Hardware support**
 
@@ -171,6 +175,14 @@ Features include:
 
 For full details, see [`docs/unreal-engine-neovim-integration.md`](docs/unreal-engine-neovim-integration.md).
 
+**Phase 18 - Perforce (optional)**
+
+Installs the Perforce CLI (`p4`) and the Qt6 GUI tools (`p4v`, `p4admin`, `p4merge`) from the AUR. Adds `QT_SCALE_FACTOR` launcher wrappers and desktop entries so the GUIs scale correctly on the HiDPI/Wayland Z13.
+
+**Phase 19 - CHITUBOX Basic + ChituManager (optional)**
+
+Installs CHITUBOX Basic from the AUR and applies the Hyprland/Wayland fixes (`QT_QPA_PLATFORM=xcb`, Fusion style, scale wrapper). If ChituManager is present, applies the same fixes and desktop/MIME integration.
+
 ## Custom Hyprland keybindings
 
 Phase 4 adds the following keybindings to your Hyprland config:
@@ -192,6 +204,7 @@ lib/
   phase0_update.sh        System update
   phase1_kernel.sh        CachyOS repos, Hyprland fix, kernel, ASUS tools
   phase2_asusd.sh         asusd service fix
+  phase2b_fan_curves.sh   Disable asusd custom fan curves (leave fans to firmware)
   phase3_hardware.sh      Firmware, tablet utilities, Wi-Fi fix, audio fixes
   phase4_hyprland.sh      Hyprland configuration
   phase5_rogquick.sh      ROG Quick TDP menu
@@ -207,6 +220,8 @@ lib/
   phase15_orca_scaling.sh      Orca Bambu Studio DPI scaling fix
   phase16_bambu_scaling.sh     Bambu Studio DPI scaling fix
   phase17_unreal_engine.sh     Unreal Engine 5 installer + Neovim integration
+  phase18_perforce.sh          Perforce CLI + Qt6 GUI DPI scaling
+  phase19_chitubox.sh          CHITUBOX Basic + ChituManager DPI/Wayland fixes
 templates/
   hypr/z13.lua            Z13 Hyprland module (monitors, input, binds, rules) — Phase 4
   rog-profile-notify.sh   Platform profile change notification script
@@ -228,6 +243,7 @@ scripts/
   setup-ue-neovim.sh          Neovim/LazyVim UE integration setup
   prep-quattro-upgrade.sh     Back up customizations before the Omarchy 4 upgrade
   z13-power-validate.sh       Record power-profile signals across a charge cycle
+  z13-fan-curve-probe.sh      Measure whether a custom fan curve pins fan 2
   scx-bench.sh                CPU scheduler benchmark harness
   scx-ab-test.sh              EEVDF vs sched_ext A/B comparison
   scx-sweep.sh                Scheduler config sweep
@@ -235,6 +251,7 @@ scripts/
 docs/
   unreal-engine-neovim-integration.md  Full UE+nvim integration guide
   z13-power-profile-churn-fix.md       AC0 flapping bug: cause, fix, validation
+  z13-fan-curve-gz302ea.md             Custom fan curves vs fan 2: measurements, reproduction, probe
   external-display-4k120-chroma.md     4K@120 YCbCr 4:2:0 bandwidth limit
   omarchy-quattro-upgrade-checklist.md Omarchy 4 upgrade plan
   scx-sched-ext-evaluation.md          sched_ext evaluation (not adopted)

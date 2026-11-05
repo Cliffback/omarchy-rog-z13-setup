@@ -15,6 +15,7 @@ source "$SCRIPT_DIR/lib/common.sh"
 source "$SCRIPT_DIR/lib/phase0_update.sh"
 source "$SCRIPT_DIR/lib/phase1_kernel.sh"
 source "$SCRIPT_DIR/lib/phase2_asusd.sh"
+source "$SCRIPT_DIR/lib/phase2b_fan_curves.sh"
 source "$SCRIPT_DIR/lib/phase3_hardware.sh"
 source "$SCRIPT_DIR/lib/phase4_hyprland.sh"
 source "$SCRIPT_DIR/lib/phase5_rogquick.sh"
@@ -104,6 +105,7 @@ fi
 
 # Phases 2–5 (no reboot needed)
 run_phase 2 "asusd Service Fix"       phase2_check phase2_run || true
+run_phase 2b "Fan Curves (leave to firmware)" phase2b_check phase2b_run || true
 run_phase 3 "Hardware Support"         phase3_check phase3_run || true
 run_phase 4 "Hyprland Configuration"   phase4_check phase4_run || true
 run_phase 5 "ROG Quick TDP Menu"       phase5_check phase5_run || true

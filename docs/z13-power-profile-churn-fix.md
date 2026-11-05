@@ -180,6 +180,20 @@ wrapper. No udev rule, no root, no `RUN+=`.
 Validate with `scripts/z13-power-validate.sh loadtest [SECONDS]` while plugged
 in and charging: **profile changes <= 2** is the pass condition.
 
+### Fan-curve writes are cosmetic while the custom curves are off
+
+asusd still logs `write_profile_curve_to_platform` on every AC-line notify. With
+the repo's default — custom fan curves disabled (Phase 2b) — the write still
+reaches the platform, but with `enabled: false` the EC keeps its own per-profile
+table in charge, so the fan effect is cosmetic. A flat fan RPM across an AC
+transition is therefore expected and does not mean the write is harmless in
+every configuration.
+
+With a custom curve enabled, the same write was observed to pin fan 2 at
+~6300 RPM on GZ302EA (BIOS 314); controlled re-tests at 45–50 °C did not
+reproduce it. The 2026-10-10 baseline (4700–5100 RPM under stress) was captured
+with curves off. See [z13-fan-curve-gz302ea.md](z13-fan-curve-gz302ea.md).
+
 ### Why the udev machinery stayed retired
 
 1. **No root-executes-user-code.** The old rule used `RUN+=` pointing into a

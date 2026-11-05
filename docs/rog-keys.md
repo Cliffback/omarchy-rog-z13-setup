@@ -24,6 +24,13 @@
 The Armory Crate key (Fn+F5) cycles through ACPI platform profiles via asusd.
 A notification is shown on each change via `~/.local/bin/rog-profile-notify.sh`.
 
+Fan behaviour comes from the **firmware's own per-profile table**. asusd's
+custom fan curves are disabled by design (Phase 2b): on this machine a custom
+curve was observed to pin the second fan at ~6300 RPM; re-tests at warm idle
+did not reproduce it, so the probe is the check. Quiet is the silent profile
+only while its custom curve is off. See
+[docs/z13-fan-curve-gz302ea.md](z13-fan-curve-gz302ea.md).
+
 ### Check current profile
 
 ```bash
@@ -35,7 +42,8 @@ asusctl profile get
 ### Available profiles
 
 All profiles share the same firmware TDP ceiling (120W SPL). The difference is
-fan curves and CPU boost behavior (EPP). The Z13's cooling sustains ~70-75W max.
+the firmware fan table and CPU boost behavior (EPP). The Z13's cooling sustains
+~70-75W max.
 
 | Profile | Fan Behavior | CPU Boost (EPP) | Practical Wattage |
 |---------|-------------|-----------------|-------------------|
@@ -59,6 +67,21 @@ via Fn+F5.
 | 70W | Max sustained (thermal ceiling) |
 
 ## Known Issues
+
+### Fan 2 observed pinned at ~6300 RPM with a custom fan curve
+
+On GZ302EA with BIOS 314, an asusd custom fan curve was observed to pin
+`gpu_fan` at ~6300–6400 RPM even at 36 °C and 12–18 W. Controlled re-tests at
+45–50 °C did not reproduce it, so `scripts/z13-fan-curve-probe.sh` is the check.
+The firmware's per-profile table is fine: with the curves off, Quiet is the
+quietest and Balanced/Performance ramp with temperature and load (Performance
+reached 4700–5100 RPM under stress). Phase 2b keeps the custom curves disabled as
+the conservative default.
+
+Do not re-enable a curve to quieten the machine. The working lever for lower
+temperatures and fan noise is the **TDP cap** (Phase 5, `Super+Shift+Q`). See
+[docs/z13-fan-curve-gz302ea.md](z13-fan-curve-gz302ea.md) for the measurements,
+the probe, and the z13ctl-plus alternative.
 
 ### Keyboard backlight not persisting across reboots
 

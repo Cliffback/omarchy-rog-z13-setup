@@ -14,7 +14,10 @@
 #   2. FAN-CURVE churn — asusd rewrites the fan curve on every AC-line notify
 #      ("External power supply state changed"), even when it does NOT change the
 #      profile. The debounce cannot stop this; it scales with AC events, not
-#      profile changes.
+#      profile changes. With custom curves disabled (the repo default, Phase
+#      2b) the writes are cosmetic; with one enabled they have been observed to
+#      pin fan 2 at ~6300 RPM on GZ302EA, though that is not always reproducible.
+#      See docs/z13-fan-curve-gz302ea.md.
 #
 # Counting strategy: the authoritative AC-event count comes from the asusd
 # journal, and profile/fan-curve counts from the journal too. The 1 s sampler is
@@ -45,6 +48,7 @@ FANLOG="${STATE_DIR}/fan.log"
 INTERVAL="${INTERVAL:-1}"
 FAN_INTERVAL="${FAN_INTERVAL:-0.1}"
 FAN_DELTA_THRESHOLD="${FAN_DELTA_THRESHOLD:-100}"
+FAN_CURVE_CONFIG="/etc/asusd/fan_curves.ron"
 
 mkdir -p "$STATE_DIR"
 
@@ -199,6 +203,17 @@ fan_sampler() {
   done
 }
 
+# Whether the persisted custom curves are on. The fan-curve writes are cosmetic
+# only while these are disabled; a flat AC window with a curve on proves nothing.
+fan_curve_state() {
+  [[ -f $FAN_CURVE_CONFIG ]] || { echo unknown; return; }
+  if grep -q 'enabled: true' "$FAN_CURVE_CONFIG"; then
+    echo enabled
+  else
+    echo disabled
+  fi
+}
+
 # Report per-fan spread overall, and within +/-1.5 s of each AC0 transition.
 # If asusd's writes actually moved the fans, the spread around the transitions
 # would stand out from the overall spread.
@@ -207,7 +222,9 @@ fan_report() {
     echo "(no fan samples)"
     return
   fi
-  awk -v thresh="$FAN_DELTA_THRESHOLD" '
+  local curves
+  curves=$(fan_curve_state)
+  awk -v thresh="$FAN_DELTA_THRESHOLD" -v curves="$curves" '
     function mn(a,b){ return (a==""||b<a)?b:a }
     function mx(a,b){ return (a==""||b>a)?b:a }
     { n++; t[n]=$1; cpu[n]=$2; gpu[n]=$3; acpi[n]=$4; ac0[n]=$5
@@ -236,10 +253,21 @@ fan_report() {
         if(dg>worst) worst=dg
       }
       printf "  worst within-window fan spread: %d RPM (threshold %d)\n", worst, thresh
-      if(worst<=thresh)
-        print "  -> Fan RPM did not move around the AC transitions: the fan-curve writes are benign."
-      else
+      if(worst<=thresh) {
+        if (curves=="disabled") {
+          print "  -> Fan RPM did not move around the AC transitions, and custom fan curves are disabled:"
+          print "     the writes are cosmetic (the EC per-profile table is in charge)."
+          print "     See docs/z13-fan-curve-gz302ea.md."
+        } else if (curves=="enabled") {
+          print "  -> Fan RPM did not move in this window, but a custom fan curve is enabled:"
+          print "     that does not prove the writes are benign. Run scripts/z13-fan-curve-probe.sh."
+        } else {
+          print "  -> Fan RPM did not move around the AC transitions (custom-curve state unknown)."
+        }
+      } else {
         print "  -> Fan RPM moved around AC transitions: the writes are not cosmetic."
+        print "     See docs/z13-fan-curve-gz302ea.md."
+      }
     }
   ' "$FANLOG"
 }
@@ -290,10 +318,11 @@ print_report() {
   echo "governor changes: $gov_changes"
   echo
 
-  echo "--- asusd fan-curve writes (AC-driven; the debounce cannot stop these) ---"
+  echo "--- asusd fan-curve writes (AC-driven; cosmetic while custom curves are off) ---"
   local fan_curves
   fan_curves=$(count_fan_curves)
   echo "count: $fan_curves  (expected ~2 per AC event: CPU + GPU)"
+  echo "custom curves: $(fan_curve_state)  ($FAN_CURVE_CONFIG)"
   echo
 
   echo "--- debounce wrapper decisions ---"
@@ -342,6 +371,7 @@ print_report() {
   echo "Quattro 2026-09-16:      0 flaps over 36->90% charge (missed: intermittent)"
   echo "Quattro 2026-10-10:      ~1 Hz storm under stress-ng/Lychee while charging,"
   echo "                         98 fan-curve writes in one boot (140 W supply)"
+  echo "2026-10-10 fan baseline: 4700-5100 RPM under stress (Performance, curves off)"
 }
 
 cmd_start() {
