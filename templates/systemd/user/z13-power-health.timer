@@ -1,0 +1,12 @@
+[Unit]
+Description=Periodic Z13 power-profile health check
+
+[Timer]
+# First check shortly after login, then every 5 minutes. Monotonic timers do
+# not wake a suspended machine; after resume the check runs within one period.
+OnStartupSec=2min
+OnUnitActiveSec=5min
+RandomizedDelaySec=30s
+
+[Install]
+WantedBy=timers.target

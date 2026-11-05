@@ -34,6 +34,8 @@ phase3_check() {
         && [[ ! -f ~/.local/bin/z13-wifi-powersave-auto ]] \
         && [[ ! -f ~/.config/omarchy/hooks/post-update.d/z13-power-profile-debounce-hook.sh ]] \
         && [[ -x ~/.local/bin/omarchy-powerprofiles-set ]] \
+        && [[ -x ~/.local/bin/z13-power-health ]] \
+        && [[ -f ~/.config/systemd/user/z13-power-health.timer ]] \
         && [[ ! -d ~/.config/omarchy/plugins/z13.battery ]] \
         && [[ ! -d ~/.config/omarchy/plugins/z13.lock ]]
 }
@@ -266,6 +268,47 @@ phase3_run() {
         fi
     else
         warn "Power-profile wrapper template missing ($pp_wrapper_src)."
+    fi
+
+    # Install the report-only health check and its user timer. Every failure
+    # mode on this path is silent (a dropped call, a stale sentinel, a stuck
+    # profile, a shadowed wrapper); the timer turns them into a journal line
+    # every 5 minutes and a notification when something is wrong. See
+    # docs/z13-power-profile-churn-fix.md.
+    local pp_health_src="$SCRIPT_DIR/scripts/z13-power-health.sh"
+    local pp_health_dst="$HOME/.local/bin/z13-power-health"
+    if [[ -f $pp_health_src ]]; then
+        if [[ ! -f $pp_health_dst ]] || ! cmp -s "$pp_health_src" "$pp_health_dst"; then
+            info "Installing power-profile health check..."
+            run_cmd mkdir -p "$HOME/.local/bin"
+            run_cmd install -m 0755 "$pp_health_src" "$pp_health_dst"
+            success "Power-profile health check installed."
+        else
+            success "Power-profile health check up to date."
+        fi
+
+        local pp_unit_src="$SCRIPT_DIR/templates/systemd/user"
+        local pp_unit_dst="$HOME/.config/systemd/user"
+        local unit
+        if [[ -d $pp_unit_src ]]; then
+            run_cmd mkdir -p "$pp_unit_dst"
+            for unit in z13-power-health.service z13-power-health.timer; do
+                if [[ ! -f "$pp_unit_dst/$unit" ]] || ! cmp -s "$pp_unit_src/$unit" "$pp_unit_dst/$unit"; then
+                    run_cmd install -m 0644 "$pp_unit_src/$unit" "$pp_unit_dst/$unit"
+                fi
+            done
+            # Non-fatal: a session without a user systemd manager should not
+            # abort the whole phase.
+            run_cmd systemctl --user daemon-reload \
+                || warn "Could not reload the user systemd manager."
+            if run_cmd systemctl --user enable --now z13-power-health.timer; then
+                success "Power-profile health timer enabled."
+            else
+                warn "Could not enable z13-power-health.timer; run it manually."
+            fi
+        fi
+    else
+        warn "Power-profile health check missing ($pp_health_src)."
     fi
 
     # HDMI audio: Enable auto-profile for AMD HDMI controller

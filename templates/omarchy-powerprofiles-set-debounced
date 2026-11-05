@@ -28,16 +28,27 @@
 
 set -u
 
-ORIG_SCRIPT="/usr/bin/omarchy-powerprofiles-set"
+ORIG_SCRIPT="${Z13_ORIG_SCRIPT:-/usr/bin/omarchy-powerprofiles-set}"
+
+# Sysfs roots, overridable so the settle logic can be exercised against fixture
+# trees (scripts/test-z13-power-profiles-wrapper.sh).
+POWER_SUPPLY_ROOT="${Z13_POWER_SUPPLY_ROOT:-/sys/class/power_supply}"
+PLATFORM_PROFILE_PATH="${Z13_PLATFORM_PROFILE:-/sys/firmware/acpi/platform_profile}"
 
 # Wait-for-stability: require STABLE_READS consecutive agreeing readings,
 # polling every INTERVAL seconds, giving up after MAX_SAMPLES reads. A mismatch
 # restarts the window rather than aborting, so a mid-transition start converges
 # on the settled value; an unrecognised reading (e.g. "Unknown" during a
 # transition) also restarts it.
-STABLE_READS=2
-INTERVAL=1
-MAX_SAMPLES=6
+#
+# Four reads (~3 s), not two: the EC's charge-boundary flaps last 1-2 s, which
+# two 1 s samples cannot tell apart from a real unplug. Those flaps settled as
+# "battery", applied power-saver (platform_profile quiet) and were only undone
+# by the ac call a second later. A genuine unplug now applies after ~3 s, which
+# nothing depends on; explicit profile picks bypass settling entirely.
+STABLE_READS=4
+INTERVAL="${Z13_SETTLE_INTERVAL:-1}"
+MAX_SAMPLES=10
 
 # Atomic deduplication: only one instance may proceed. mkdir is atomic, so an
 # event burst collapses to a single evaluation instead of a thundering herd.
@@ -46,23 +57,53 @@ RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 PROCESSING="${RUNTIME_DIR}/z13-powerprofiles.processing"
 mkdir -p "$RUNTIME_DIR" 2>/dev/null || true
 
+log() {
+    if [[ -n ${Z13_POWER_LOG:-} ]]; then
+        printf '%s\n' "$*" >> "$Z13_POWER_LOG" 2>/dev/null || true
+        return 0
+    fi
+    logger -t z13-powerprofiles "$*" 2>/dev/null || true
+}
+
+# Identify the holder so a leaked sentinel is attributable instead of anonymous.
+sentinel_owner() {
+    local desc="unknown"
+    if [[ -r $PROCESSING/owner ]]; then
+        desc=$(tr '\n' ' ' < "$PROCESSING/owner" 2>/dev/null)
+        desc=${desc% }
+    fi
+    printf '%s' "${desc:-unknown}"
+}
+
 if ! mkdir "$PROCESSING" 2>/dev/null; then
     if [[ -d $PROCESSING ]]; then
         age=$(( $(date +%s) - $(stat -c %Y "$PROCESSING" 2>/dev/null || echo 0) ))
         if (( age > 30 )); then
-            rmdir "$PROCESSING" 2>/dev/null
-            mkdir "$PROCESSING" 2>/dev/null || exit 0
+            log "reclaiming stale sentinel age=${age}s owner=$(sentinel_owner)"
+            rm -rf -- "$PROCESSING"
+            mkdir "$PROCESSING" 2>/dev/null || { log "skipped: could not reclaim sentinel"; exit 0; }
         else
+            # Never silent: a dropped call looks exactly like "nothing happened",
+            # which is how the 2026-11-05 sentinel leak went unnoticed.
+            log "skipped: sentinel held age=${age}s owner=$(sentinel_owner)"
             exit 0
         fi
     else
+        log "skipped: sentinel path exists and is not a directory"
         exit 0
     fi
 fi
-cleanup() { rmdir "$PROCESSING" 2>/dev/null || true; }
+# Remove the whole directory: the owner file lives inside it, so a plain rmdir
+# would fail and leave the sentinel wedged.
+cleanup() { rm -rf -- "$PROCESSING" 2>/dev/null || true; }
 trap cleanup EXIT
 
-log() { logger -t z13-powerprofiles "$*" 2>/dev/null || true; }
+{
+    printf 'pid=%s\n' "$$"
+    printf 'parent_pid=%s\n' "$PPID"
+    printf 'parent=%s\n' "$(ps -o comm= -p "$PPID" 2>/dev/null || echo unknown)"
+    printf 'since=%s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+} > "$PROCESSING/owner" 2>/dev/null || true
 
 # Run the original script to completion instead of exec'ing into it. `exec`
 # replaces this shell, so the EXIT trap never runs and $PROCESSING is left
@@ -82,7 +123,7 @@ run_orig() {
 # e.g. the Elan touchpad's hid-...-battery-7, which reports capacity 0).
 find_system_battery() {
     local ps scope
-    for ps in /sys/class/power_supply/*; do
+    for ps in "$POWER_SUPPLY_ROOT"/*; do
         [[ -r $ps/type && -r $ps/status ]] || continue
         [[ $(cat "$ps/type") == Battery ]] || continue
         scope=$(cat "$ps/scope" 2>/dev/null || echo "")
@@ -109,7 +150,7 @@ read_battery_action() {
 # USB supply reporting online=1 as AC.
 read_ac_action() {
     local found=0 ps type
-    for ps in /sys/class/power_supply/*; do
+    for ps in "$POWER_SUPPLY_ROOT"/*; do
         [[ -r $ps/online && -r $ps/type ]] || continue
         type=$(cat "$ps/type")
         [[ $type == Mains || $type == USB ]] || continue
@@ -131,9 +172,10 @@ detect_action() {
 }
 
 settle_action() {
-    local current prev="" agree=0 i action=""
+    local current prev="" agree=0 i action="" samples=""
     for (( i = 0; i < MAX_SAMPLES; i++ )); do
         if current=$(detect_action); then
+            samples+="$current "
             if [[ -n $prev && $current == "$prev" ]]; then
                 agree=$((agree + 1))
                 if (( agree >= STABLE_READS - 1 )); then
@@ -145,12 +187,45 @@ settle_action() {
             fi
             prev="$current"
         else
+            samples+="? "
             prev=""
             agree=0
         fi
         sleep "$INTERVAL"
     done
+    if [[ -z $action ]]; then
+        log "power source did not settle after $MAX_SAMPLES samples (readings: ${samples% })"
+    fi
     printf '%s\n' "$action"
+}
+
+# ---------------------------------------------------------------------------
+# Profile reads.
+# ---------------------------------------------------------------------------
+
+# PPD maps its profiles one-to-one onto platform_profile: power-saver -> quiet,
+# balanced -> balanced, performance -> performance. asusd reacts to
+# platform_profile, so this is the profile that actually matters.
+read_platform_profile() {
+    local p
+    p=$(cat "$PLATFORM_PROFILE_PATH" 2>/dev/null) || return 1
+    [[ -n $p ]] || return 1
+    case "$p" in
+        quiet) printf 'power-saver\n' ;;
+        *)     printf '%s\n' "$p" ;;
+    esac
+}
+
+# Ask PPD over D-Bus rather than through powerprofilesctl: that is a PyGObject
+# script, and Omarchy avoids spawning it because a CPython 3.14 shutdown race
+# (python/cpython#124619) can kill it with SIGSEGV.
+profile_available() {
+    if [[ -n ${Z13_PROFILES_AVAILABLE:-} ]]; then
+        [[ " ${Z13_PROFILES_AVAILABLE} " == *" $1 "* ]]
+        return
+    fi
+    busctl get-property net.hadess.PowerProfiles /net/hadess/PowerProfiles \
+        net.hadess.PowerProfiles Profiles 2>/dev/null | grep -q "\"$1\""
 }
 
 # ---------------------------------------------------------------------------
@@ -165,55 +240,54 @@ settle_action() {
 if (( $# > 2 )); then
     # Let the real script print its usage error.
     run_orig "$@"
-    exit
+    rc=$?
+    log "usage error: rc=$rc argc=$#"
+    exit "$rc"
 fi
 
 action_arg="${1:-autodetect}"
 profile_arg="${2:-}"
 
-action=$(settle_action)
-
-if [[ -z $action ]]; then
-    if [[ -n $profile_arg ]]; then
-        # An explicit profile pick must not be dropped just because the line is
-        # flapping: fall back to the caller's action, then to a single reading.
-        case "$action_arg" in
-            ac|battery) action="$action_arg" ;;
-            *)          action=$(detect_action) || action="autodetect" ;;
-        esac
-        log "explicit profile '$profile_arg' during unsettled power; using $action"
-    else
-        log "power source did not settle; leaving profile unchanged"
-        exit 0
-    fi
+# Explicit picks are user-driven and must not wait for the settle window: the
+# power panel and DeckShift expect the profile to change immediately, and the
+# packaged script resolves `autodetect` itself.
+if [[ -n $profile_arg ]]; then
+    log "applying explicit profile '$profile_arg' for $action_arg"
+    run_orig "$action_arg" "$profile_arg"
+    rc=$?
+    log "applied: action=$action_arg profile=$profile_arg rc=$rc"
+    exit "$rc"
 fi
 
-if [[ -n $profile_arg ]]; then
-    log "applying explicit profile '$profile_arg' for $action"
-    run_orig "$action" "$profile_arg"
-    exit
+action=$(settle_action)
+if [[ -z $action ]]; then
+    log "leaving profile unchanged"
+    exit 0
 fi
 
 # Idempotency: skip when the profile for this action is already active. This
-# prevents a redundant powerprofilesctl set (and asusd fan-curve rewrite) when
-# the settled source maps to the profile already in use.
+# prevents a redundant set (and asusd fan-curve rewrite) when the settled source
+# maps to the profile already in use.
 state_dir="${OMARCHY_POWERPROFILES_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/powerprofiles}"
 state_file="$state_dir/$action"
 target=""
 [[ -r $state_file ]] && target=$(<"$state_file")
 if [[ -z $target ]]; then
-    if [[ $action == ac ]] && powerprofilesctl list 2>/dev/null | grep -q 'performance'; then
+    if [[ $action == ac ]] && profile_available performance; then
         target=performance
     else
         target=balanced
     fi
 fi
 
-current=$(powerprofilesctl get 2>/dev/null || true)
+current=$(read_platform_profile 2>/dev/null || true)
 if [[ -n $current && $current == "$target" ]]; then
     log "settled on $action; profile already $target"
     exit 0
 fi
 
-log "settled on $action; applying $( [[ -n $target ]] && echo "$target" || echo "state-file profile" )"
+log "settled on $action; applying $target"
 run_orig "$action"
+rc=$?
+log "applied: action=$action profile=$target rc=$rc"
+exit "$rc"

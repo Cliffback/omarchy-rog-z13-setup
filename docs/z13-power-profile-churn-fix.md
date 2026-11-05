@@ -138,6 +138,12 @@ each pair ~2 s apart. Every `false` produced `Setting BalancePower`, every
 `true` `Setting Performance`. Nothing flapped once the pack reached the 90%
 limit and stopped charging.
 
+Correction (2026-11-05, BIOS 314): the charge limit itself is not quiet. At 89%
+with a 90% limit and `BAT0.status = Not charging` (`power_now = 0`), four flaps
+landed in 3½ minutes (17:04:07, 17:06:55, 17:06:59, 17:07:24), each 1–2 s. The
+EC toggles around the top-off boundary, so "stop charging" does not mean "stop
+flapping". This is the regime the four-read settle window is sized for.
+
 ### The load-while-charging storm (2026-10-10, BIOS 314)
 
 BIOS 314 did not help. With the battery charging and a sustained CPU+iGPU load
@@ -162,15 +168,19 @@ Phase 3 from `templates/omarchy-powerprofiles-set-debounced`:
 
 - keys on **`BAT0.status`** (actual power flow), not `UPower.onBattery`
   (`Discharging` -> battery; `Charging`/`Not charging`/`Full` -> ac);
-- waits for two consecutive agreeing readings (bounded timeout), restarting the
-  window on a mismatch so a genuine transition still converges;
+- waits for four consecutive agreeing readings (~3 s, bounded timeout),
+  restarting the window on a mismatch so a genuine transition still converges.
+  Two readings were not enough: 1–2 s charge-boundary flaps settled as
+  "battery" and applied power-saver for a second or two before the ac call
+  undid it (measured 2026-11-05 at 17:04–17:07);
 - if it cannot settle — a sustained storm — it **does nothing**;
 - if settled, it reads the `~/.local/state/omarchy/powerprofiles/<ac|battery>`
   state file and skips the call when that profile is already active;
-- passes explicit-profile calls through (`ac|battery <profile>`,
-  `autodetect <profile>`) so the power panel, menu and DeckShift keep working,
-  even if the line is unsettled;
-- logs decisions under `logger -t z13-powerprofiles`.
+- applies explicit-profile calls (`ac|battery <profile>`, `autodetect
+  <profile>`) immediately, without the settle window, so the power panel, menu
+  and DeckShift keep working even if the line is flapping;
+- logs every decision and every exit under `logger -t z13-powerprofiles`,
+  including dropped calls and the sampled readings of an unsettled window.
 
 `~/.config/hypr/z13.lua` prepends `~/.local/bin` to the compositor PATH after
 Omarchy's `default/hypr/envs.lua` (which puts `$OMARCHY_PATH/bin` first), so the
@@ -205,6 +215,86 @@ check for a leftover sentinel first:
 ls -lad "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/z13-powerprofiles.processing"
 ```
 
+The same day, at 17:07, a flap outlasted the by-then two-read window and produced
+a brief quiet: `power-saver` applied, `performance` restored one second later.
+With the fix in place that was cosmetic rather than stuck, but it is why the
+settle window is now four reads: the residual blip should not happen at all.
+
+### Monitoring (2026-11-05)
+
+Every failure on this path is silent. A dropped call, a stale sentinel, a stuck
+profile, and a shadowed wrapper all look the same from the outside: "it went
+quiet again". Two layers make them visible.
+
+**Wrapper audit trail.** `logger -t z13-powerprofiles` records every exit:
+`settled on …; profile already …`, `settled on …; applying …`, `applied:
+action=… profile=… rc=…`, `skipped: sentinel held age=… owner=…`, the sampled
+readings when a window never settles, and stale-sentinel reclamation. A leaked
+sentinel names its holder because the sentinel directory carries an `owner` file
+(`pid`, `parent_pid`, `parent` command).
+
+**Health timer.** `z13-power-health.timer` (user unit, every 5 min) runs
+`~/.local/bin/z13-power-health`. It logs one summary line per run to
+`logger -t z13-power-health` and notifies — at most once per hour per check —
+when something is wrong. It never repairs by itself; `--fix` is manual so a
+regression stays visible.
+
+| Check | Fails when | Meaning |
+|---|---|---|
+| `wrapper` | missing, `z13.lua` lost the PATH prepend, or AC events in 7 days with no wrapper lines | wrapper shadowed / not resolving |
+| `sentinel` | `z13-powerprofiles.processing` older than 60 s | leaked or wedged run |
+| `divergence` | profile ≠ state-file mapping on 2 consecutive runs, and the mismatch began next to a power event or wrapper decision | stuck profile (the bug class that matters) |
+| `flaps` | more than 120 flaps/h | storm; supply headroom |
+| `blips` | recorded, never alerted | a down/up pair within 10 s; the harmless residual |
+
+A mismatch with no recent power activity is a deliberate manual override: it is
+logged once as `override(...)` and never notified. `skipped_1h` is recorded but
+not alerted — a skip is the dedupe guard working, not a failure; a real leak is
+caught by the sentinel age and the divergence check.
+
+Summary shape:
+
+```
+health ok profile=performance expected=performance source=ac sentinel=absent \
+  div=ok wrapper=ok flaps_1h=68 changes_1h=1 blips_1h=0 skipped_1h=0 warnings=0
+```
+
+`~/.local/bin/z13-power-health status` prints the same data readably, `--json`
+for scripts, and `--fix` clears a stale sentinel and re-applies the state-file
+profile for the current source.
+
+## Debugging
+
+| Tag | Producer | Contains |
+|---|---|---|
+| `z13-powerprofiles` | wrapper | settle decisions, `applied … rc=`, `skipped: sentinel held …` |
+| `z13-power-health` | timer | 5-min summary and warnings |
+| `asusd` `ctrl_platform` | asusd | every AC-line edge and the EPP/platform_profile write it triggers |
+
+First 60 seconds:
+
+```bash
+cat /sys/firmware/acpi/platform_profile                 # actual
+cat /sys/class/power_supply/BAT0/status                 # actual power flow
+cat ~/.local/state/omarchy/powerprofiles/{ac,battery}    # desired mapping
+
+journalctl -b -t z13-powerprofiles -n 20 --no-pager
+journalctl -b -t z13-power-health -n 5 --no-pager
+ls -lad "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/z13-powerprofiles.processing"
+
+journalctl -b --since -1h --no-pager | grep -c 'External power supply state changed'
+```
+
+Use the sysfs read, **not** `powerprofilesctl get`: that spawns Python, and
+Omarchy avoids it because of a CPython 3.14 shutdown race (python/cpython#124619).
+
+| Symptom | Cause | Check | Fix |
+|---|---|---|---|
+| Quiet on AC and it stays | ac restore dropped (stale sentinel) | sentinel dir age | `z13-power-health --fix`, or `rm -rf` it then `omarchy-powerprofiles-set ac` |
+| A switch does nothing | state file already holds the target (e.g. `battery=performance`) | state files | `omarchy-powerprofiles-set battery balanced` |
+| Wrapper never logs | shadowed by the packaged script / PATH lost | no wrapper lines while asusd logs AC edges | fix `~/.config/hypr/z13.lua`, `omarchy-restart-shell` |
+| Brief quiet blips | EC flap at least as long as the settle window | `blips_1h` | expected residual; see the settle-window note |
+| Fans rev, profile steady | asusd rewrites curves on every AC edge | fan-curve write count | supply headroom; not software-fixable |
 
 ### Why the udev machinery stayed retired
 
@@ -231,12 +321,16 @@ so the clone silently lost behaviour. The wrapper keeps the built-in service.
   `/etc/NetworkManager/conf.d/omarchy-wifi-powersave.conf` (`wifi.powersave = 2`).
   No udev rule, no wrapper.
 - `lib/phase3_hardware.sh` removes any legacy udev rules/root wrapper/hook, and
-  installs/refreshes the wrapper. Re-running the repo cleans up a machine that
-  still carries the old fix.
+  installs/refreshes the wrapper, the health check and its user timer. Re-running
+  the repo cleans up a machine that still carries the old fix.
 - Use the **200 W stock adapter** for heavy work while charging. A 140 W supply
   is what turns the mild flap into the ~1 Hz storm.
 - DeckShift's profile writes are left as-is: they only happen inside Gaming
   Mode.
+- The health timer is report-only by design. If the flap rate or the blip count
+  becomes a nuisance, the next lever is the settle window
+  (`STABLE_READS`), not auto-healing: `blips_1h` in the summary says whether
+  anything still gets through.
 
 ## Reproduce the measurement
 
@@ -257,7 +351,11 @@ user plugged in once" read as healthy rather than as churn.
 |---|---|---|
 | `templates/omarchy-powerprofiles-set-debounced` | Debounced BAT0-keyed wrapper, installed to `~/.local/bin/omarchy-powerprofiles-set` | current (Phase 3) |
 | `templates/hypr/z13.lua` | Prepends `~/.local/bin` to the compositor PATH | current (Phase 4) |
+| `scripts/z13-power-health.sh` | Report-only health check, installed to `~/.local/bin/z13-power-health` | current (Phase 3) |
+| `templates/systemd/user/z13-power-health.{service,timer}` | 5-minute user timer for the health check | current (Phase 3) |
 | `scripts/z13-power-validate.sh` | Validation / load-test monitor | current |
+| `scripts/test-z13-power-profiles-wrapper.sh` | Fixture tests for the wrapper (flap/storm/sentinel) | current |
+| `scripts/test-z13-power-health.sh` | Fixture tests for the health check | current |
 | `templates/99-power-profile.rules` | Battery-keyed udev profile rule | retired (Omarchy 3) |
 | `templates/99-wifi-powersave.rules` | Battery-keyed udev Wi-Fi rule | retired |
 | `templates/z13-wifi-powersave-auto.sh` | Wi-Fi power-save wrapper | retired |

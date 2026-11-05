@@ -74,6 +74,10 @@ count_ppd() { count_since_start "omarchy-powerprofiles-set"; }
 # never settles, and "profile already" for a no-op.
 count_z13_applied()   { count_since_start "z13-powerprofiles.*applying"; }
 count_z13_absorbed()  { count_since_start "z13-powerprofiles.*leaving profile unchanged"; }
+# A skip is the dedupe guard working (an event arrived while another run was
+# settling), not a failure; a sustained non-zero count with no applied lines is
+# what the health timer treats as a leak.
+count_z13_skipped()   { count_since_start "z13-powerprofiles.*skipped:"; }
 
 # Which profile-switch path owns AC/battery right now.
 battery_service() {
@@ -300,6 +304,7 @@ print_report() {
   echo "path:                     $(battery_service)"
   echo "applied (incl. explicit): $(count_z13_applied)"
   echo "absorbed (storm):         $(count_z13_absorbed)"
+  echo "skipped (dedupe):         $(count_z13_skipped)"
   echo
 
   echo "=========================================================="
@@ -379,6 +384,7 @@ cmd_status() {
   printf 'asusd fan-curve writes:     %s\n' "$(count_fan_curves)"
   printf 'wrapper applied:            %s\n' "$(count_z13_applied)"
   printf 'wrapper absorbed:           %s\n' "$(count_z13_absorbed)"
+  printf 'wrapper skipped:            %s\n' "$(count_z13_skipped)"
   printf 'switch path:                %s\n' "$(battery_service)"
   echo
   if [[ -f $PIDFILE ]] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
