@@ -155,6 +155,19 @@ it; a second heavy process (Lychee slicing) brought it back. The supply was a
 An under-provisioned supply + charging + load is what tips the EC into the
 oscillating regime.
 
+### The 21:44 burst (2026-11-05)
+
+Four AC-off edges in 12 s at 21:44:22, then the same pattern at 21:54:25,
+21:56:54 and 21:57:24, at 54% and ~72 W into the pack with load ~2.8. Each
+burst held `BAT0.status=Discharging` for ~5 s, long enough for the four-read
+window to settle: the wrapper applied power-saver and the ac call undid it 5–6 s
+later. Four visible down/up pairs in 13 minutes. A fifth burst at 21:49:33
+(5 edges / 13 s) never settled and changed nothing.
+
+The control is the genuine battery stint 19:32:50 → 21:42:27: `battery` applied
+once at unplug and `ac` once at replug, with no intervening switches. The
+difference is the burst, not the four-read window itself.
+
 ### Why 314 did not fix it
 
 BIOS 314 is a security/fleet-maintenance release (AGESA `StrixHaloPI-FP11`
@@ -173,6 +186,11 @@ Phase 3 from `templates/omarchy-powerprofiles-set-debounced`:
   Two readings were not enough: 1–2 s charge-boundary flaps settled as
   "battery" and applied power-saver for a second or two before the ac call
   undid it (measured 2026-11-05 at 17:04–17:07);
+- applies an asymmetric **burst guard**: a battery switch that follows another
+  automatic call within 3 minutes must see ten agreeing readings (~9 s)
+  instead of four. ac restores keep the four-read window, so a real replug is
+  not delayed. This is sized for the 21:44–21:57 bursts above, where a ~5 s
+  `Discharging` run under four reads became a visible down/up pair;
 - if it cannot settle — a sustained storm — it **does nothing**;
 - if settled, it reads the `~/.local/state/omarchy/powerprofiles/<ac|battery>`
   state file and skips the call when that profile is already active;
@@ -246,6 +264,10 @@ regression stays visible.
 | `divergence` | profile ≠ state-file mapping on 2 consecutive runs, and the mismatch began next to a power event or wrapper decision | stuck profile (the bug class that matters) |
 | `flaps` | more than 120 flaps/h | storm; supply headroom |
 | `blips` | recorded, never alerted | a down/up pair within 10 s; the harmless residual |
+| `bursts` | `bursts_1h > 0` and `blips_1h > 0` | a cluster of consecutive AC-off edges beat the burst guard |
+
+`bursts_1h` groups AC-off edges with no more than 30 s between consecutive
+edges (at least three per group); a burst the guard absorbs stays silent.
 
 A mismatch with no recent power activity is a deliberate manual override: it is
 logged once as `override(...)` and never notified. `skipped_1h` is recorded but
@@ -256,7 +278,7 @@ Summary shape:
 
 ```
 health ok profile=performance expected=performance source=ac sentinel=absent \
-  div=ok wrapper=ok flaps_1h=68 changes_1h=1 blips_1h=0 skipped_1h=0 warnings=0
+  div=ok wrapper=ok flaps_1h=68 changes_1h=1 blips_1h=0 bursts_1h=0 skipped_1h=0 warnings=0
 ```
 
 `~/.local/bin/z13-power-health status` prints the same data readably, `--json`
@@ -281,6 +303,7 @@ cat ~/.local/state/omarchy/powerprofiles/{ac,battery}    # desired mapping
 journalctl -b -t z13-powerprofiles -n 20 --no-pager
 journalctl -b -t z13-power-health -n 5 --no-pager
 ls -lad "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/z13-powerprofiles.processing"
+cat "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/z13-powerprofiles.events" 2>/dev/null
 
 journalctl -b --since -1h --no-pager | grep -c 'External power supply state changed'
 ```
@@ -293,7 +316,7 @@ Omarchy avoids it because of a CPython 3.14 shutdown race (python/cpython#124619
 | Quiet on AC and it stays | ac restore dropped (stale sentinel) | sentinel dir age | `z13-power-health --fix`, or `rm -rf` it then `omarchy-powerprofiles-set ac` |
 | A switch does nothing | state file already holds the target (e.g. `battery=performance`) | state files | `omarchy-powerprofiles-set battery balanced` |
 | Wrapper never logs | shadowed by the packaged script / PATH lost | no wrapper lines while asusd logs AC edges | fix `~/.config/hypr/z13.lua`, `omarchy-restart-shell` |
-| Brief quiet blips | EC flap at least as long as the settle window | `blips_1h` | expected residual; see the settle-window note |
+| Brief quiet blips | EC burst outlasted the settle window | `blips_1h` with `bursts_1h` | the burst guard absorbs runs up to ~9 s; a longer burst warns under `burst` |
 | Fans rev, profile steady | asusd rewrites curves on every AC edge | fan-curve write count | supply headroom; not software-fixable |
 
 ### Why the udev machinery stayed retired
@@ -328,9 +351,9 @@ so the clone silently lost behaviour. The wrapper keeps the built-in service.
 - DeckShift's profile writes are left as-is: they only happen inside Gaming
   Mode.
 - The health timer is report-only by design. If the flap rate or the blip count
-  becomes a nuisance, the next lever is the settle window
-  (`STABLE_READS`), not auto-healing: `blips_1h` in the summary says whether
-  anything still gets through.
+  becomes a nuisance, the next lever is the burst guard's read count
+  (`BURST_STABLE_READS`), not auto-healing: `blips_1h` and `bursts_1h` in the
+  summary say whether anything still gets through.
 
 ## Reproduce the measurement
 

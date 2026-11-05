@@ -175,6 +175,23 @@ journal_since() {
     journalctl "${args[@]}" 2>/dev/null
 }
 
+# Same window with epoch-prefixed lines. Burst clustering needs real
+# timestamps, and `-o short-unix` is locale-independent.
+journal_since_unix() {
+    local secs=$1 tag=${2:-}
+    if [[ -n $POWER_LOG_SOURCE ]]; then
+        if [[ -n $tag ]]; then
+            grep -F -- "${tag}[" "$POWER_LOG_SOURCE" 2>/dev/null
+        else
+            cat "$POWER_LOG_SOURCE" 2>/dev/null
+        fi
+        return
+    fi
+    local -a args=(--since "@$((NOW - secs))" -o short-unix --no-pager)
+    [[ -n $tag ]] && args+=(-t "$tag")
+    journalctl "${args[@]}" 2>/dev/null
+}
+
 count_fixed() { journal_since "$1" "${3:-}" | grep -cF -- "$2" || true; }
 count_re()    { journal_since "$1" "${3:-}" | grep -c  -- "$2" || true; }
 
@@ -202,6 +219,28 @@ count_blips() {
         }
         END { print blips + 0 }
     '
+}
+
+# Bursts: groups of at least three AC-off edges with no more than 30 s between
+# consecutive edges. One flap is two edges (off/on); three or more off-edges
+# close together is the regime that can outlast the debounce. A sustained storm
+# is one group, not one per 30 s window.
+count_bursts() {
+    journal_since_unix "$1" asusd \
+        | grep -F 'External power supply state changed: false' \
+        | awk '
+            match($0, /^[0-9]+(\.[0-9]+)?/) { ts[n++] = substr($0, 1, RLENGTH) + 0 }
+            END {
+                i = 0
+                while (i < n) {
+                    j = i
+                    while (j + 1 < n && ts[j+1] - ts[j] <= 30) j++
+                    if (j - i + 1 >= 3) bursts++
+                    i = j + 1
+                }
+                print bursts + 0
+            }
+        '
 }
 
 # ---------------------------------------------------------------------------
@@ -337,11 +376,18 @@ flaps_1h=$(count_fixed 3600 'External power supply state changed: false' asusd)
 changes_1h=$(count_re 3600 'applying' z13-powerprofiles)
 skipped_1h=$(count_re 3600 'skipped:' z13-powerprofiles)
 blips_1h=$(count_blips 3600)
+bursts_1h=$(count_bursts 3600)
 
 # A storm is the only flap-rate alert: the usual 60-70/h boundary chatter is
 # known EC behaviour and is recorded, not notified.
 if (( flaps_1h > STORM_FLAPS_PER_HOUR )); then
     add_warning flaps "flaps_1h=$flaps_1h (storm; check supply headroom: 200 W stock, 140 W SlimQ)"
+fi
+
+# A burst matters only when it beat the guard and produced a visible blip; a
+# burst the guard absorbed stays silent.
+if (( bursts_1h > 0 && blips_1h > 0 )); then
+    add_warning burst "bursts_1h=$bursts_1h blips_1h=$blips_1h: debounce beaten"
 fi
 
 warning_count=${#WARNINGS[@]}
@@ -356,7 +402,7 @@ else
     status_text="ok"
 fi
 
-summary="health $status_text profile=${profile:-unknown} expected=${expected:-n/a} source=$source sentinel=$sentinel_state div=$divergence_state wrapper=$wrapper_state flaps_1h=$flaps_1h changes_1h=$changes_1h blips_1h=$blips_1h skipped_1h=$skipped_1h warnings=$warning_count"
+summary="health $status_text profile=${profile:-unknown} expected=${expected:-n/a} source=$source sentinel=$sentinel_state div=$divergence_state wrapper=$wrapper_state flaps_1h=$flaps_1h changes_1h=$changes_1h blips_1h=$blips_1h bursts_1h=$bursts_1h skipped_1h=$skipped_1h warnings=$warning_count"
 (( warning_count > 0 )) && summary+=" [${keys}]"
 
 mode="${1:-run}"
@@ -382,6 +428,7 @@ divergence:        $divergence_state
 AC flaps:          $flaps_1h
 profile changes:   $changes_1h
 brief blips:       $blips_1h
+AC bursts:         $bursts_1h
 wrapper skips:     $skipped_1h
 
 === warnings ===
@@ -393,10 +440,10 @@ EOF
         fi
         ;;
     --json)
-        printf '{"status":"%s","source":"%s","profile":"%s","expected":"%s","wrapper":"%s","sentinel":"%s","divergence":"%s","flaps_1h":%s,"changes_1h":%s,"blips_1h":%s,"skipped_1h":%s,"warnings":%s}\n' \
+        printf '{"status":"%s","source":"%s","profile":"%s","expected":"%s","wrapper":"%s","sentinel":"%s","divergence":"%s","flaps_1h":%s,"changes_1h":%s,"blips_1h":%s,"bursts_1h":%s,"skipped_1h":%s,"warnings":%s}\n' \
             "$status_text" "$source" "${profile:-unknown}" "${expected:-}" \
             "$wrapper_state" "$sentinel_state" "$divergence_state" \
-            "$flaps_1h" "$changes_1h" "$blips_1h" "$skipped_1h" "$warning_count"
+            "$flaps_1h" "$changes_1h" "$blips_1h" "$bursts_1h" "$skipped_1h" "$warning_count"
         ;;
     --fix)
         log "fix requested: $summary"

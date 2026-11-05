@@ -10,6 +10,10 @@
 #     charge-boundary behaviour);
 #   * a sustained unplug still applies the battery profile after the ~3 s
 #     settle window;
+#   * a 5 s status run after recent automatic activity (a burst) does not
+#     settle on battery, while a 12 s run still does (~10 reads);
+#   * ac restores keep the fast window even during a burst, and an event older
+#     than the 3-minute window does not arm the guard;
 #   * a 1 Hz storm never settles and changes nothing;
 #   * explicit profile picks bypass settling;
 #   * the sentinel is always removed, a held sentinel is logged, a stale one is
@@ -78,6 +82,12 @@ run_wrapper() {
         "$WRAPPER" "$@"
 }
 
+# Seed the wrapper's automatic-event file with one event $1 seconds old.
+seed_event() {
+    printf '%s\n' "$(( $(date +%s) - ${1:-10} ))" \
+        > "$TMP/run/z13-powerprofiles.events"
+}
+
 cat > "$TMP/orig.sh" <<'EOF'
 #!/bin/bash
 printf '%s\n' "$*" >> "$CALLS_LOG"
@@ -121,6 +131,47 @@ run_wrapper ac
 check "real unplug: settled on battery" grep -q 'settled on battery' "$EXTRA_LOG"
 check "real unplug: applied battery" grep -qx 'battery' "$CALLS"
 check "real unplug: sentinel removed" test ! -e "$SENTINEL"
+
+# ── burst guard: a 5 s run after recent activity must not settle ───────────
+setup performance
+seed_event 10
+drive "Discharging:5" "Not charging:20"
+run_wrapper battery
+check "burst guard: 5 s run never settled on battery" not_grep 'settled on battery' "$EXTRA_LOG"
+check "burst guard: 5 s run applied no battery profile" not_grep battery "$CALLS"
+check "burst guard: long window logged" grep -q 'burst guard:.*requiring 10 reads' "$EXTRA_LOG"
+
+# ── burst guard: a 12 s run still settles after ~10 reads ──────────────────
+setup performance
+seed_event 10
+drive "Discharging:12" "Not charging:20"
+run_wrapper battery
+check "burst guard: 12 s run settled on battery" grep -q 'settled on battery' "$EXTRA_LOG"
+check "burst guard: 12 s run applied battery" grep -qx 'battery' "$CALLS"
+
+# ── quiet line: a 5 s run settles in the normal four-read window ───────────
+setup performance
+drive "Discharging:5" "Not charging:20"
+run_wrapper battery
+check "quiet line: 5 s run settled on battery" grep -q 'settled on battery' "$EXTRA_LOG"
+check "quiet line: guard not armed" not_grep 'burst guard' "$EXTRA_LOG"
+
+# ── ac restores stay fast even during a burst ──────────────────────────────
+setup balanced
+seed_event 10
+drive "Not charging:20"
+run_wrapper ac
+check "burst: ac restore settled on ac" grep -q 'settled on ac' "$EXTRA_LOG"
+check "burst: ac restore applied ac" grep -qx 'ac' "$CALLS"
+check "burst: ac restore skipped the guard" not_grep 'burst guard' "$EXTRA_LOG"
+
+# ── an event older than the window does not arm the guard ──────────────────
+setup performance
+seed_event 200
+drive "Discharging:5" "Not charging:20"
+run_wrapper battery
+check "expired event: 5 s run settled on battery" grep -q 'settled on battery' "$EXTRA_LOG"
+check "expired event: guard not armed" not_grep 'burst guard' "$EXTRA_LOG"
 
 # ── storm: nothing settles, so nothing may change ───────────────────────────
 setup performance

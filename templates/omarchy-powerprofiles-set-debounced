@@ -50,11 +50,23 @@ STABLE_READS=4
 INTERVAL="${Z13_SETTLE_INTERVAL:-1}"
 MAX_SAMPLES=10
 
+# Battery switches only: an asymmetric burst guard. The EC can hold
+# BAT0.status=Discharging for ~5 s across a burst of AC edges. Four reads still
+# settles that, and the matching ac call then undoes it (2026-11-05 21:44-21:57:
+# four visible down/up blips). When another automatic call happened within
+# BURST_WINDOW, a battery switch must instead see BURST_STABLE_READS agreeing
+# readings (~9 s). ac restores keep the normal window, so a real replug is not
+# delayed. Explicit profile picks bypass both windows.
+BURST_WINDOW=180
+BURST_STABLE_READS=10
+BURST_MAX_SAMPLES=14
+
 # Atomic deduplication: only one instance may proceed. mkdir is atomic, so an
 # event burst collapses to a single evaluation instead of a thundering herd.
 # A crashed run can leave the sentinel behind; reclaim it once it is stale.
 RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 PROCESSING="${RUNTIME_DIR}/z13-powerprofiles.processing"
+EVENTS_FILE="${RUNTIME_DIR}/z13-powerprofiles.events"
 mkdir -p "$RUNTIME_DIR" 2>/dev/null || true
 
 log() {
@@ -115,6 +127,32 @@ run_orig() {
     "$ORIG_SCRIPT" "$@"
 }
 
+# Record this automatic call and return how many calls have happened in the
+# last BURST_WINDOW seconds, including this one. The sentinel guarantees a
+# single writer, so a plain read-modify-write is safe. An unwritable runtime
+# dir degrades to "one event", i.e. the normal window, rather than guessing a
+# burst.
+record_event() {
+    local now cutoff tmp count
+    now=$(date +%s)
+    cutoff=$(( now - BURST_WINDOW ))
+    tmp="${EVENTS_FILE}.tmp.$$"
+    mkdir -p "$RUNTIME_DIR" 2>/dev/null || true
+    if {
+            if [[ -r $EVENTS_FILE ]]; then
+                awk -v c="$cutoff" '$1 ~ /^[0-9]+$/ && ($1 + 0) > c' "$EVENTS_FILE" 2>/dev/null
+            fi
+            printf '%s\n' "$now"
+        } > "$tmp" 2>/dev/null; then
+        count=$(awk 'END { print NR + 0 }' "$tmp" 2>/dev/null) || count=1
+        mv -f -- "$tmp" "$EVENTS_FILE" 2>/dev/null || rm -f -- "$tmp" 2>/dev/null
+    else
+        rm -f -- "$tmp" 2>/dev/null
+        count=1
+    fi
+    printf '%s\n' "${count:-1}"
+}
+
 # ---------------------------------------------------------------------------
 # Resolve the real power source from BAT0.status.
 # ---------------------------------------------------------------------------
@@ -172,13 +210,14 @@ detect_action() {
 }
 
 settle_action() {
+    local required="${1:-$STABLE_READS}" max="${2:-$MAX_SAMPLES}"
     local current prev="" agree=0 i action="" samples=""
-    for (( i = 0; i < MAX_SAMPLES; i++ )); do
+    for (( i = 0; i < max; i++ )); do
         if current=$(detect_action); then
             samples+="$current "
             if [[ -n $prev && $current == "$prev" ]]; then
                 agree=$((agree + 1))
-                if (( agree >= STABLE_READS - 1 )); then
+                if (( agree >= required - 1 )); then
                     action="$current"
                     break
                 fi
@@ -194,7 +233,7 @@ settle_action() {
         sleep "$INTERVAL"
     done
     if [[ -z $action ]]; then
-        log "power source did not settle after $MAX_SAMPLES samples (readings: ${samples% })"
+        log "power source did not settle after $max samples (readings: ${samples% })"
     fi
     printf '%s\n' "$action"
 }
@@ -259,7 +298,19 @@ if [[ -n $profile_arg ]]; then
     exit "$rc"
 fi
 
-action=$(settle_action)
+# Burst guard: the shell only passes ac|battery (autodetect is the session
+# init), so the direction is known before the wait. Only a battery switch is
+# delayed; ac restores keep the fast window.
+events=$(record_event)
+reads=$STABLE_READS
+max=$MAX_SAMPLES
+if [[ $action_arg == battery ]] && (( events >= 2 )); then
+    reads=$BURST_STABLE_READS
+    max=$BURST_MAX_SAMPLES
+    log "burst guard: ${events} events in ${BURST_WINDOW}s; requiring ${reads} reads"
+fi
+
+action=$(settle_action "$reads" "$max")
 if [[ -z $action ]]; then
     log "leaving profile unchanged"
     exit 0

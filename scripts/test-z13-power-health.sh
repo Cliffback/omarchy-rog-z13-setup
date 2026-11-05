@@ -163,6 +163,36 @@ EOF
 out=$(run_health --json)
 check "blips: one paired blip counted" test "$(printf '%s' "$out" | json_field blips_1h)" -eq 1
 
+# ── burst detection: >=3 AC-off edges close together ───────────────────────
+setup performance ac
+cat > "$TMP/journal.log" <<'EOF'
+1793895000.0 omarchy z13-powerprofiles[1]: settled on ac; profile already performance
+1793895010.0 omarchy asusd[1]: [DEBUG asusd] External power supply state changed: false
+1793895015.0 omarchy asusd[1]: [DEBUG asusd] External power supply state changed: false
+1793895020.0 omarchy asusd[1]: [DEBUG asusd] External power supply state changed: false
+1793895025.0 omarchy asusd[1]: [DEBUG asusd] External power supply state changed: false
+EOF
+out=$(run_health --json)
+check "burst: four close edges count as one" test "$(printf '%s' "$out" | json_field bursts_1h)" -eq 1
+check "burst without a blip: no warning" test "$(printf '%s' "$out" | json_field warnings)" -eq 0
+
+# ── a burst that beat the guard is alerted under the burst key ────────────
+setup performance ac
+cat > "$TMP/journal.log" <<'EOF'
+1793895000.0 omarchy z13-powerprofiles[1]: settled on ac; profile already performance
+1793895010.0 omarchy asusd[1]: [DEBUG asusd] External power supply state changed: false
+1793895015.0 omarchy asusd[1]: [DEBUG asusd] External power supply state changed: false
+1793895020.0 omarchy asusd[1]: [DEBUG asusd] External power supply state changed: false
+1793895025.0 omarchy asusd[1]: [DEBUG asusd] External power supply state changed: false
+1793895030.0 omarchy z13-powerprofiles[2]: settled on battery; applying power-saver
+1793895034.0 omarchy z13-powerprofiles[3]: settled on ac; applying performance
+EOF
+out=$(run_health --json)
+check "burst + blip: warning raised" test "$(printf '%s' "$out" | json_field warnings)" -ge 1
+check "burst + blip: one burst and one blip" sh -c "printf '%s' '$out' | grep -q '\"bursts_1h\":1' && printf '%s' '$out' | grep -q '\"blips_1h\":1'"
+run_health run >/dev/null
+check "burst + blip: burst key in summary" grep -q '\[burst' "$TMP/health.log"
+
 # ── --fix: clears the sentinel and re-applies the expected profile ────────
 setup quiet ac
 mkdir "$TMP/run/z13-powerprofiles.processing"
