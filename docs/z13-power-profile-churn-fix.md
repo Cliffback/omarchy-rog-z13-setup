@@ -180,6 +180,32 @@ wrapper. No udev rule, no root, no `RUN+=`.
 Validate with `scripts/z13-power-validate.sh loadtest [SECONDS]` while plugged
 in and charging: **profile changes <= 2** is the pass condition.
 
+### The exec/sentinel leak (fixed 2026-11-05)
+
+A single one-second `AC0` blip flipped `BAT0.status` to `Discharging` for long
+enough to satisfy the two-sample settle window, so the wrapper applied the
+battery profile (`power-saver`, i.e. `platform_profile=quiet`). The matching ac
+call was then dropped:
+
+- every apply path ended with `exec "$ORIG_SCRIPT" ...`;
+- `exec` replaces the shell, so the `EXIT` trap never ran and
+  `$XDG_RUNTIME_DIR/z13-powerprofiles.processing` was left behind;
+- the next call within 30 s found that sentinel, judged it not stale, and
+  exited 0 **silently** — exactly the call that would have restored
+  `performance`.
+
+The machine stayed on quiet until an explicit profile pick 35 s later, which
+only got through because the sentinel had aged past the reclaim threshold.
+
+`run_orig` now invokes the original script as a child and the script exits
+normally, so the trap always fires. When a profile change seems to be ignored,
+check for a leftover sentinel first:
+
+```bash
+ls -lad "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/z13-powerprofiles.processing"
+```
+
+
 ### Why the udev machinery stayed retired
 
 1. **No root-executes-user-code.** The old rule used `RUN+=` pointing into a
