@@ -32,6 +32,8 @@ source "$SCRIPT_DIR/lib/phase16_bambu_scaling.sh"
 source "$SCRIPT_DIR/lib/phase17_unreal_engine.sh"
 source "$SCRIPT_DIR/lib/phase18_perforce.sh"
 source "$SCRIPT_DIR/lib/phase19_chitubox.sh"
+source "$SCRIPT_DIR/lib/phase20_herdr.sh"
+source "$SCRIPT_DIR/lib/phase21_theme.sh"
 
 # Track state
 NEEDS_REBOOT=0
@@ -122,6 +124,8 @@ run_phase 16 "Bambu Studio (optional)" phase16_check phase16_run || true
 run_phase 17 "Unreal Engine 5 (optional)" phase17_check phase17_run || true
 run_phase 18 "Perforce (p4 + p4v)" phase18_check phase18_run || true
 run_phase 19 "CHITUBOX Basic + ChituManager (optional)" phase19_check phase19_run || true
+run_phase 20 "Herdr Terminal Integration" phase20_check phase20_run || true
+run_phase 21 "Catppuccin Mocha Theme" phase21_check phase21_run || true
 
 # ── Summary ──────────────────────────────────────────────────────────────
 

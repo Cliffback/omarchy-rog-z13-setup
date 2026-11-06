@@ -1,0 +1,8 @@
+#!/bin/bash
+# Shadow Omarchy's omarchy-launch-terminal-herdr (installed by Phase 20).
+#
+# Omarchy's SUPER+CTRL+RETURN binding calls this name. ~/.local/bin precedes
+# $OMARCHY_PATH/bin on the compositor PATH (see hypr/z13.lua), so launching
+# through herdr-attach adds the post-attach OpenCode theme refresh without
+# changing the binding or the Omarchy menu.
+exec omarchy-launch-terminal "$HOME/.local/bin/herdr-attach"

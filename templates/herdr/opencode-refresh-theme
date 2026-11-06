@@ -1,0 +1,40 @@
+#!/bin/bash
+# Refresh OpenCode's generated "system" theme after the Herdr client attaches.
+#
+# OpenCode resolves the terminal palette when the TUI starts. Herdr restores
+# agent panes at server start, before a client can supply the host palette, so
+# those restored TUIs cache the fallback palette and stay grey. SIGUSR2 makes
+# OpenCode re-read the terminal colours (OpenCode 2.x theme subsystem).
+#
+# Only interactive TUIs that carry a native session id are signalled. The
+# shared `opencode serve --service` process does not handle SIGUSR2 and would
+# terminate on the default disposition, so it is never matched. The SigCgt
+# check is a second guard for any other process that happens to match.
+set -u
+
+while IFS= read -r pid; do
+    [[ -n $pid ]] || continue
+
+    exe=$(readlink -f "/proc/$pid/exe" 2>/dev/null) || continue
+    case "$exe" in
+        */opencode|*/opencode.exe) ;;
+        *) continue ;;
+    esac
+
+    # Restored/attached TUIs are started with --session ses_...
+    cmd=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null) || continue
+    case "$cmd" in
+        *" --session ses_"*) ;;
+        *) continue ;;
+    esac
+
+    # SIGUSR2 is signal 12, bit 0x800 in /proc/PID/status. A process without a
+    # handler would die on the default disposition.
+    sigcgt=$(awk '/^SigCgt:/ { print $2 }' "/proc/$pid/status" 2>/dev/null) || continue
+    [[ -n $sigcgt ]] || continue
+    (( (0x$sigcgt & 0x800) != 0 )) || continue
+
+    kill -USR2 "$pid" 2>/dev/null || true
+done < <(pgrep -f -- '--session ses_' 2>/dev/null || true)
+
+exit 0
