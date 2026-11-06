@@ -177,7 +177,11 @@ EC/adapter-flap fix, and downgrading is not permitted.
 ## Current fix
 
 A debounced wrapper, `~/.local/bin/omarchy-powerprofiles-set`, installed by
-Phase 3 from `templates/omarchy-powerprofiles-set-debounced`:
+Phase 3 from `templates/omarchy-powerprofiles-set-debounced`. Operations,
+deployment, test seams, and known residuals are in
+[z13-power-operations.md](z13-power-operations.md).
+
+The wrapper:
 
 - keys on **`BAT0.status`** (actual power flow), not `UPower.onBattery`
   (`Discharging` -> battery; `Charging`/`Not charging`/`Full` -> ac);
@@ -377,6 +381,7 @@ user plugged in once" read as healthy rather than as churn.
 | `scripts/z13-power-health.sh` | Report-only health check, installed to `~/.local/bin/z13-power-health` | current (Phase 3) |
 | `templates/systemd/user/z13-power-health.{service,timer}` | 5-minute user timer for the health check | current (Phase 3) |
 | `scripts/z13-power-validate.sh` | Validation / load-test monitor | current |
+| `docs/z13-power-operations.md` | Operating sheet: behaviour, paths, commands, seams, residuals, branch state | current |
 | `scripts/test-z13-power-profiles-wrapper.sh` | Fixture tests for the wrapper (flap/storm/sentinel) | current |
 | `scripts/test-z13-power-health.sh` | Fixture tests for the health check | current |
 | `templates/99-power-profile.rules` | Battery-keyed udev profile rule | retired (Omarchy 3) |

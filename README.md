@@ -50,9 +50,9 @@ Also fixes an audio issue where speakers go silent after plugging/unplugging hea
 
 Additionally initializes the speaker amplifier mixer (ALC294 + CS35L41) and enables HDMI audio auto-profile for AMD HDMI controllers so external monitors appear as audio output devices.
 
-This phase also retires the old Z13 power-profile churn machinery (the battery-keyed `99-power-profile.rules` / `99-wifi-powersave.rules` udev rules, the Wi-Fi power-save wrapper, the post-update hook, and the earlier `z13.battery`/`z13.lock` service clones) and installs the current fix: a debounced `omarchy-powerprofiles-set` wrapper at `~/.local/bin/omarchy-powerprofiles-set`. The Z13's EC flaps `AC0.online` while charging — a few times per few minutes near full charge, and at ~1 Hz under heavy load on an under-rated 140 W supply — and Omarchy 4's shell turns each flap into a profile switch. The wrapper keys on `BAT0.status` and only acts once the source has settled for four readings (~3 s), so a 1–2 s flap changes nothing; Phase 4's `z13.lua` puts `~/.local/bin` ahead of `/usr/share/omarchy/bin` on the compositor PATH. No udev, no root, no `RUN+=`.
+This phase also retires the old Z13 power-profile churn machinery (the battery-keyed `99-power-profile.rules` / `99-wifi-powersave.rules` udev rules, the Wi-Fi power-save wrapper, the post-update hook, and the earlier `z13.battery`/`z13.lock` service clones) and installs the current fix: a debounced `omarchy-powerprofiles-set` wrapper at `~/.local/bin/omarchy-powerprofiles-set`. The Z13's EC flaps `AC0.online` while charging — a few times per few minutes near full charge, and at ~1 Hz under heavy load on an under-rated 140 W supply — and Omarchy 4's shell turns each flap into a profile switch. The wrapper keys on `BAT0.status` and waits for four agreeing readings (~3 s), so a 1–2 s flap changes nothing. A battery switch that follows another automatic call within 3 minutes uses a burst guard (ten readings, ~9 s), so a ~5 s post-burst `Discharging` run cannot apply, while ac restores keep the fast window. Phase 4's `z13.lua` puts `~/.local/bin` ahead of `/usr/share/omarchy/bin` on the compositor PATH. No udev, no root, no `RUN+=`.
 
-Phase 3 also installs `~/.local/bin/z13-power-health` and a `z13-power-health.timer` user unit (every 5 minutes). It is report-only: it logs one summary line to `journalctl -t z13-power-health` and notifies when a failure would otherwise be silent — a stale wrapper sentinel, a profile stuck off the state-file value, or a wrapper that is no longer on the compositor PATH. See [docs/z13-power-profile-churn-fix.md](docs/z13-power-profile-churn-fix.md).
+Phase 3 also installs `~/.local/bin/z13-power-health` and a `z13-power-health.timer` user unit (every 5 minutes). It is report-only: it logs one summary line to `journalctl -t z13-power-health` and notifies when a failure would otherwise be silent — a stale wrapper sentinel, a profile stuck off the state-file value, a wrapper that is no longer on the compositor PATH, more than 120 AC flaps per hour, or a burst that produced a profile blip (i.e. it beat the guard). The summary includes `flaps_1h`, `blips_1h`, and `bursts_1h`. See [docs/z13-power-profile-churn-fix.md](docs/z13-power-profile-churn-fix.md) and [docs/z13-power-operations.md](docs/z13-power-operations.md).
 
 **Phase 4 - Hyprland configuration**
 
@@ -240,6 +240,7 @@ scripts/
 docs/
   unreal-engine-neovim-integration.md  Full UE+nvim integration guide
   z13-power-profile-churn-fix.md       AC0 flapping bug: cause, fix, validation
+  z13-power-operations.md              Wrapper/health operations, deploy, residuals
   external-display-4k120-chroma.md     4K@120 YCbCr 4:2:0 bandwidth limit
   omarchy-quattro-upgrade-checklist.md Omarchy 4 upgrade plan
   scx-sched-ext-evaluation.md          sched_ext evaluation (not adopted)
