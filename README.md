@@ -126,6 +126,8 @@ sudo rm /usr/local/bin/controller-gaming-trigger
 
 Configures WirePlumber with priority-based automatic audio sink switching: Bluetooth > HDMI > Internal speakers. Disables saved default restoration so the priority routing always takes effect when devices connect or disconnect.
 
+Two outputs are kept below the internal speakers because they cannot report whether a device is plugged in, and otherwise steal the default sink while empty: the Radeon HDMI "Pro Audio" PCMs (`pro-output-*`), which expose no ports and stay "available" after the monitor is unplugged, and the CalDigit dock's USB analog output, which has no jack detection. Real HDMI (`hdmi-stereo`, which tracks the jack) and real USB speakers (e.g. the KEF LSX) still take priority. Without this, removing the HDMI monitor sends all audio — Chrome included — to a dead jack, so nothing is audible even though streams keep playing.
+
 **Phase 13 - Hibernate Wake Fix (optional)**
 
 Prevents spurious wakes during hibernate caused by the AMD GPIO controller (AMDI0030) on Ryzen 7000+ / Strix Halo. Adds a kernel parameter via limine-entry-tool to ignore interrupt pins 2 and 3. Requires a reboot to take effect. See the [Arch Wiki](https://wiki.archlinux.org/title/Power_management/Wakeup_triggers#Ryzen_7000_Series) for background.
