@@ -1,17 +1,16 @@
 #!/bin/bash
 # Phase 12: Audio Sink Routing (priority-based automatic switching)
-# Configures WirePlumber to prefer Bluetooth > HDMI > Internal speakers.
 # Disables saved default restoration so priority-based switching always wins.
-# Keeps outputs that cannot detect a plugged device (Radeon Pro Audio PCMs,
-# the CalDigit dock's USB output) below the internal speakers.
+# Bluetooth and USB speakers outrank the internal speakers; HDMI and outputs
+# that cannot report a plugged device stay below them.
 
 AUDIO_ROUTING_CONF="$HOME/.config/wireplumber/wireplumber.conf.d/audio-sink-priorities.conf"
 
 phase12_check() {
-    # Content check, not just existence: installs that predate the pro-output
-    # and dock rules already have the file and would otherwise never update.
+    # Content check, not just existence: machines provisioned with the older
+    # rules already have the file and would otherwise never pick up changes.
     [[ -f "$AUDIO_ROUTING_CONF" ]] \
-        && file_contains "$AUDIO_ROUTING_CONF" "pro-output"
+        && file_contains "$AUDIO_ROUTING_CONF" "z13-audio-routing v3"
 }
 
 phase12_run() {
@@ -19,24 +18,31 @@ phase12_run() {
     mkdir -p ~/.config/wireplumber/wireplumber.conf.d
     cat > "$AUDIO_ROUTING_CONF" << 'EOF'
 ## Audio sink priority routing.
-## Bluetooth > HDMI > Internal speakers.
-## Disables saved default restoration so priority always wins.
+## Bluetooth and USB speakers outrank the internal speakers; everything whose
+## presence cannot be trusted stays below them. Disables saved default
+## restoration so priority always wins.
 ##
-## Two outputs cannot report whether anything is plugged into them, so they are
-## kept below the internal speakers instead of above them:
+## Markers: z13-audio-routing v3
 ##
-##  - Radeon HDMI "Pro Audio" PCMs (pro-output-*) expose no ports, so
-##    WirePlumber counts them as available even with no cable attached and the
-##    card profile set to "off". Their default priority (1100-1200) beats the
-##    internal analog sink (1009), so one of them becomes the default and every
-##    stream plays into a dead HDMI jack after the monitor is unplugged.
-##  - The CalDigit dock's USB analog output has no jack detection either
-##    ("availability unknown"), so it wins over the internal speakers while
-##    nothing is plugged into it.
+## Below the internal analog sink (1009):
 ##
-## Real HDMI (hdmi-stereo, 1500) does track the jack and still wins while a
-## display is connected; real USB speakers (e.g. the KEF LSX, 1109) still win
-## too. Select a dock output or a Pro output by hand when you do want it.
+##  - HDMI (950). WirePlumber normally skips a node whose device route is
+##    unavailable, but the ACP route on this machine goes stale: after the
+##    monitor is unplugged the card can still report its HDMI route as
+##    available, with the monitor's product name, even though the HDA jack
+##    reads "off" and the DRM connector is disconnected. The HDMI node then
+##    keeps winning the default and every stream plays into a dead jack. That
+##    state has survived a suspend/resume, so HDMI is opt-in here: pick the
+##    display output in the sound panel when you want monitor audio. A
+##    WirePlumber restart re-probes the route and drops the leaked node.
+##  - CalDigit dock USB analog (900): no jack detection ("availability
+##    unknown"), so it wins over the internal speakers while nothing is
+##    plugged into it.
+##  - Radeon HDMI Pro Audio PCMs (pro-output-*, 100): expose no ports at all,
+##    so they count as available even with the card profile set to "off".
+##
+## Above it: Bluetooth (2000) and real USB speakers such as the KEF LSX
+## (1109, device default, left untouched).
 
 wireplumber.settings = {
   node.restore-default-targets = false
@@ -66,7 +72,7 @@ monitor.alsa.rules = [
     ]
     actions = {
       update-props = {
-        priority.session = 1500
+        priority.session = 950
       }
     }
   }
@@ -101,5 +107,5 @@ EOF
     rm -f ~/.local/state/wireplumber/default-nodes
 
     systemctl --user restart wireplumber pipewire pipewire-pulse 2>/dev/null || true
-    success "Audio sink routing configured (Bluetooth > HDMI > Internal)."
+    success "Audio sink routing configured (Bluetooth/USB > internal > HDMI)."
 }

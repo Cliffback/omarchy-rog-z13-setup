@@ -124,9 +124,9 @@ sudo rm /usr/local/bin/controller-gaming-trigger
 
 **Phase 12 - Audio Sink Routing**
 
-Configures WirePlumber with priority-based automatic audio sink switching: Bluetooth > HDMI > Internal speakers. Disables saved default restoration so the priority routing always takes effect when devices connect or disconnect.
+Configures WirePlumber with priority-based automatic audio sink switching: Bluetooth and USB speakers > internal speakers > HDMI. Disables saved default restoration so the priority routing always takes effect when devices connect or disconnect.
 
-Two outputs are kept below the internal speakers because they cannot report whether a device is plugged in, and otherwise steal the default sink while empty: the Radeon HDMI "Pro Audio" PCMs (`pro-output-*`), which expose no ports and stay "available" after the monitor is unplugged, and the CalDigit dock's USB analog output, which has no jack detection. Real HDMI (`hdmi-stereo`, which tracks the jack) and real USB speakers (e.g. the KEF LSX) still take priority. Without this, removing the HDMI monitor sends all audio — Chrome included — to a dead jack, so nothing is audible even though streams keep playing.
+HDMI is opt-in here because the HDMI card's ACP route goes stale on this machine: after the monitor is unplugged the card can still report its HDMI route as available, with the monitor's product name, even though the HDA jack reads `off` and the DRM connector is disconnected. WirePlumber then keeps an HDMI sink as the default and every stream — Chrome included — plays into a dead jack. The stale state has survived a suspend/resume, so a priority boost for HDMI cannot be trusted; pick the display output in the sound panel when you want monitor audio. The Radeon HDMI "Pro Audio" PCMs (`pro-output-*`, no ports at all) and the CalDigit dock's USB analog output (no jack detection) are demoted for the same reason. A WirePlumber restart re-probes the route and drops the leaked node.
 
 **Phase 13 - Hibernate Wake Fix (optional)**
 
