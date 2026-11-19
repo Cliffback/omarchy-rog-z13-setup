@@ -1,0 +1,13 @@
+[Unit]
+Description=Revert audio to the internal speakers when the last external display disconnects
+Documentation=https://github.com/cliffback/omarchy-rog-z13-setup
+After=graphical-session.target pipewire.service wireplumber.service
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/z13-audio-hotplug
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
