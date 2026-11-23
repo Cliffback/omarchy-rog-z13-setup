@@ -87,6 +87,114 @@ file_contains() {
 # Command existence check
 has_command() { command -v "$1" &>/dev/null; }
 
+# ── Limine kernel command line ───────────────────────────────────────────
+#
+# limine-entry-tool builds KERNEL_CMDLINE[default] from the drop-ins in
+# /etc/limine-entry-tool.d/*.conf and then loads /etc/default/limine last.
+# A plain `KERNEL_CMDLINE[default]="..."` there replaces everything the
+# drop-ins added; only `+=` keeps them. A plain `=` silently disabled every
+# drop-in on this machine (Omarchy's, Phase 13's, and the hibernation resume=)
+# until 2026-11-23. See docs/limine-kernel-cmdline.md.
+
+LIMINE_DEFAULT_CONF="/etc/default/limine"
+LIMINE_DROPIN_DIR="/etc/limine-entry-tool.d"
+LIMINE_ENTRY_TOOL="/usr/lib/limine/limine-entry-tool"
+
+# True when /etc/default/limine assigns KERNEL_CMDLINE[default] with a plain
+# `=`, which discards every drop-in.
+limine_default_overrides_dropins() {
+    [[ -f "$LIMINE_DEFAULT_CONF" ]] \
+        && grep -qE '^[[:space:]]*KERNEL_CMDLINE\[default\][[:space:]]*=' "$LIMINE_DEFAULT_CONF"
+}
+
+# The command line limine-mkinitcpio would bake into the next build. Read-only,
+# no sudo. Empty output when the tool is missing.
+limine_pending_cmdline() {
+    [[ -x "$LIMINE_ENTRY_TOOL" ]] || return 1
+    "$LIMINE_ENTRY_TOOL" --get-cmdline linux 2>/dev/null
+}
+
+# True when the next build's command line contains the exact word $1
+# (e.g. "amdgpu.dcdebugmask=0x410").
+limine_pending_has() {
+    local word="$1"
+    limine_pending_cmdline | tr ' ' '\n' | grep -qxF -- "$word"
+}
+
+# Make drop-ins effective before a phase relies on one. With a plain `=` in
+# /etc/default/limine, offer to turn it into `+=` (backup first). Returns 1
+# when the override stays, so the caller can stop instead of writing a
+# drop-in that would be ignored.
+ensure_limine_dropins_effective() {
+    if ! limine_default_overrides_dropins; then
+        return 0
+    fi
+
+    warn "$LIMINE_DEFAULT_CONF sets KERNEL_CMDLINE[default] with a plain '='."
+    warn "That discards every drop-in in $LIMINE_DROPIN_DIR/ (resume=, Omarchy defaults, this repo's fixes)."
+    if ! ask_yn "Change it to '+=' so the drop-ins apply?"; then
+        error "Left as is. Drop-ins will have no effect until this is changed."
+        return 1
+    fi
+
+    run_sudo cp "$LIMINE_DEFAULT_CONF" "${LIMINE_DEFAULT_CONF}.bak.rog-z13.$(date +%s)"
+    # Keep a leading space inside the quotes: each += value carries its own
+    # separator, so without one the first parameter would fuse with the last
+    # drop-in's.
+    run_sudo sed -i -E 's/^([[:space:]]*KERNEL_CMDLINE\[default\])[[:space:]]*=[[:space:]]*"[[:space:]]*/\1+=" /' "$LIMINE_DEFAULT_CONF"
+    if [[ $DRY_RUN -eq 0 ]] && limine_default_overrides_dropins; then
+        error "Could not rewrite it (unquoted value?). Edit $LIMINE_DEFAULT_CONF by hand: KERNEL_CMDLINE[default]+=\" ...\""
+        return 1
+    fi
+    success "KERNEL_CMDLINE[default] in $LIMINE_DEFAULT_CONF now appends (+=)."
+}
+
+# Write a one-line KERNEL_CMDLINE drop-in (replacing the file, so re-runs stay
+# idempotent). Usage: write_limine_dropin <name.conf> <comment> <params>
+write_limine_dropin() {
+    local name="$1" comment="$2" params="$3"
+    local path="$LIMINE_DROPIN_DIR/$name"
+
+    if [[ $DRY_RUN -eq 1 ]]; then
+        info "[DRY-RUN] would write $path: KERNEL_CMDLINE[default]+=\" $params\""
+        return 0
+    fi
+    sudo mkdir -p "$LIMINE_DROPIN_DIR"
+    printf '# %s\nKERNEL_CMDLINE[default]+=" %s"\n' "$comment" "$params" \
+        | sudo tee "$path" >/dev/null
+}
+
+# Rebuild UKIs and /boot/limine.conf, then confirm every given word made it
+# into the command line limine-entry-tool reports. limine-mkinitcpio can exit 0
+# after failing a kernel, so its log is checked too.
+rebuild_limine_and_verify() {
+    info "Regenerating boot entries with limine-mkinitcpio..."
+    if [[ $DRY_RUN -eq 1 ]]; then
+        info "[DRY-RUN] would run: sudo limine-mkinitcpio, then check: $*"
+        return 0
+    fi
+
+    local log rc=0
+    log=$(mktemp)
+    sudo limine-mkinitcpio 2>&1 | tee "$log" || rc=$?
+    if (( rc != 0 )) || grep -q 'mkinitcpio failed for kernel' "$log"; then
+        rm -f "$log"
+        error "limine-mkinitcpio failed; see its output above."
+        return 1
+    fi
+    rm -f "$log"
+
+    local word missing=0
+    for word in "$@"; do
+        if ! limine_pending_has "$word"; then
+            error "'$word' is missing from the boot command line (check: $LIMINE_ENTRY_TOOL --get-cmdline linux)."
+            missing=1
+        fi
+    done
+    (( missing == 0 )) || return 1
+    success "Boot entries regenerated; command line verified."
+}
+
 # ── Desktop entry helpers ────────────────────────────────────────────────
 
 # Echo the packaged .desktop path for a package (first match under

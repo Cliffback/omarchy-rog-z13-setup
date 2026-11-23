@@ -175,6 +175,14 @@ Features include:
 
 For full details, see [`docs/unreal-engine-neovim-integration.md`](docs/unreal-engine-neovim-integration.md).
 
+**Phase 20 - AMD Display Freeze Fix (DMCUB)**
+
+Adds `amdgpu.dcdebugmask=0x410` through the drop-in `/etc/limine-entry-tool.d/amdgpu-display.conf`, which disables PSR and Panel Replay. On Strix Halo the display microcontroller (DMCUB) can crash during those power-saving transitions: the panel goes dark and ignores input while the session keeps running (`DMCUB error` in `journalctl -k`). Requires a reboot. Set `Z13_DCDEBUGMASK=0xC10` to also disable IPS if it recurs. To bring the panel back without rebooting: `hyprctl dispatch 'hl.dsp.dpms("on")'`. See [`docs/amdgpu-dmcub-display-freeze.md`](docs/amdgpu-dmcub-display-freeze.md).
+
+**Kernel parameters and Limine**
+
+Phases 13 and 20 add kernel parameters as drop-ins in `/etc/limine-entry-tool.d/`. A plain `KERNEL_CMDLINE[default]=` in `/etc/default/limine` (loaded last) discards all of them, so each of these phases checks for one and offers to change it to `+=`. See [`docs/limine-kernel-cmdline.md`](docs/limine-kernel-cmdline.md).
+
 ## Custom Hyprland keybindings
 
 Phase 4 adds the following keybindings to your Hyprland config:
@@ -211,6 +219,7 @@ lib/
   phase15_orca_scaling.sh      Orca Bambu Studio DPI scaling fix
   phase16_bambu_scaling.sh     Bambu Studio DPI scaling fix
   phase17_unreal_engine.sh     Unreal Engine 5 installer + Neovim integration
+  phase20_amdgpu_display.sh    AMD display freeze fix (dcdebugmask)
 templates/
   hypr/z13.lua            Z13 Hyprland module (monitors, input, binds, rules) — Phase 4
   rog-profile-notify.sh   Platform profile change notification script

@@ -4,11 +4,17 @@
 # (AMDI0030) on Ryzen 7000+ / Strix Halo. Adds a kernel parameter via
 # limine-entry-tool to ignore interrupt pins 2 and 3.
 # See: https://wiki.archlinux.org/title/Power_management/Wakeup_triggers#Ryzen_7000_Series
+#
+# The drop-in itself was always correct. Until 2026-11-23 it had no effect on
+# this machine because /etc/default/limine used a plain
+# `KERNEL_CMDLINE[default]=`, which discards drop-ins; the guard below catches
+# that, and the rebuild is verified against the pending command line.
 
-HIBERNATE_LIMINE_CONF="/etc/limine-entry-tool.d/hibernate-wake-fix.conf"
+HIBERNATE_LIMINE_CONF="$LIMINE_DROPIN_DIR/hibernate-wake-fix.conf"
+HIBERNATE_GPIO_PARAM="gpiolib_acpi.ignore_interrupt=AMDI0030:00@2,AMDI0030:00@3"
 
 phase13_check() {
-    grep -q "gpiolib_acpi.ignore_interrupt" /proc/cmdline 2>/dev/null
+    grep -qw -- "$HIBERNATE_GPIO_PARAM" /proc/cmdline 2>/dev/null
 }
 
 phase13_run() {
@@ -16,20 +22,18 @@ phase13_run() {
     info "This prevents the AMD GPIO controller (AMDI0030:00) from sending"
     info "spurious interrupts that immediately wake the system during S4."
 
+    ensure_limine_dropins_effective || return 1
+
     if [[ -f "$HIBERNATE_LIMINE_CONF" ]]; then
         info "Limine config already exists: $HIBERNATE_LIMINE_CONF"
     else
-        run_sudo_tee "$HIBERNATE_LIMINE_CONF" \
-            '# Hibernate Wake Fix - GPIO interrupt workaround for Ryzen 7000+/Strix Halo\n' \
-            '# Prevents spurious wakes during S4 hibernate transition\n' \
-            '# See: https://wiki.archlinux.org/title/Power_management/Wakeup_triggers#Ryzen_7000_Series\n' \
-            'KERNEL_CMDLINE[default]+=" gpiolib_acpi.ignore_interrupt=AMDI0030:00@2,AMDI0030:00@3"\n'
+        write_limine_dropin "hibernate-wake-fix.conf" \
+            "Hibernate Wake Fix - GPIO interrupt workaround for Ryzen 7000+/Strix Halo (spurious S4 wakes)" \
+            "$HIBERNATE_GPIO_PARAM"
         success "Created $HIBERNATE_LIMINE_CONF"
     fi
 
-    info "Regenerating boot entries with limine-mkinitcpio..."
-    run_sudo limine-mkinitcpio
-    success "Boot entries regenerated."
+    rebuild_limine_and_verify "$HIBERNATE_GPIO_PARAM" || return 1
 
     NEEDS_REBOOT=1
     warn "A reboot is required for the kernel parameter to take effect."
