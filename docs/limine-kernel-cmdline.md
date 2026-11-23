@@ -56,5 +56,5 @@ which is expected.
   `mkinitcpio failed for kernel` as a failure even when it exits 0, then
   confirms each parameter is in `--get-cmdline`.
 
-Phases 13 and 20 use them. Put parameters in a drop-in; do not edit the
+Phases 13, 20 and 21 use them. Put parameters in a drop-in; do not edit the
 main line in `/etc/default/limine`.

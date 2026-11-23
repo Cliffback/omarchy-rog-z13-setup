@@ -1,0 +1,31 @@
+#!/bin/bash
+# systemd-sleep hook (deployed by Phase 22 to /usr/lib/systemd/system-sleep/).
+# systemd 262 reads hooks only from /usr/lib/systemd/system-sleep/; a copy in
+# /etc/systemd/system-sleep/ is silently ignored.
+#
+# MT7925 (mt7925e) does not survive a hibernate cycle: on restore it logs
+#   mt7925e 0000:c2:00.0: Message 00020015 (seq N) timeout
+#   ieee80211 phyN: PM: dpm_run_callback(): wiphy_resume [cfg80211] returns -110
+# and Wi-Fi is gone until the module is reloaded. Unloading it before the
+# image is taken and loading it after resume avoids both.
+#
+# suspend-then-hibernate calls hooks per step with SYSTEMD_SLEEP_ACTION set,
+# so only the hibernate step unloads the driver; plain suspend is untouched.
+# Logs: journalctl -b -t mt7925-sleep
+
+action=${SYSTEMD_SLEEP_ACTION:-$2}
+loaded() { [[ -d /sys/module/mt7925e ]] && echo 1 || echo 0; }
+
+case "$1:$action" in
+  pre:hibernate | pre:hybrid-sleep)
+    logger -t mt7925-sleep "pre $action: loaded=$(loaded)"
+    # Takes ~3 s normally, up to ~65 s if the MCU is already wedged.
+    modprobe -r mt7925e || logger -t mt7925-sleep "unload failed"
+    logger -t mt7925-sleep "after pre: loaded=$(loaded)"
+    ;;
+  post:hibernate | post:hybrid-sleep)
+    modprobe mt7925e || logger -t mt7925-sleep "reload failed"
+    logger -t mt7925-sleep "post $action: loaded=$(loaded)"
+    ;;
+esac
+exit 0

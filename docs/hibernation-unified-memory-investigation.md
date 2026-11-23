@@ -1,5 +1,8 @@
 # Hibernation on Unified Memory Systems - Investigation & Plan
 
+> **Historical (2026-03).** The swap is now RAM-sized and hibernation works.
+> Current setup, verification and known issues: [hibernation.md](hibernation.md).
+
 **Date:** 2026-03-09  
 **System:** ASUS ROG Flow Z13 (2025) with unified memory (CPU+GPU shared RAM)  
 **Issue:** Hibernate option missing from Omarchy menu despite `omarchy-hibernation-setup` reporting "already set up"

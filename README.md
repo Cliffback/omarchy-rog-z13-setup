@@ -179,9 +179,17 @@ For full details, see [`docs/unreal-engine-neovim-integration.md`](docs/unreal-e
 
 Adds `amdgpu.dcdebugmask=0x410` through the drop-in `/etc/limine-entry-tool.d/amdgpu-display.conf`, which disables PSR and Panel Replay. On Strix Halo the display microcontroller (DMCUB) can crash during those power-saving transitions: the panel goes dark and ignores input while the session keeps running (`DMCUB error` in `journalctl -k`). Requires a reboot. Set `Z13_DCDEBUGMASK=0xC10` to also disable IPS if it recurs. To bring the panel back without rebooting: `hyprctl dispatch 'hl.dsp.dpms("on")'`. See [`docs/amdgpu-dmcub-display-freeze.md`](docs/amdgpu-dmcub-display-freeze.md).
 
+**Phase 21 - Hibernation (optional)**
+
+Runs `omarchy-hibernation-setup` (RAM-sized btrfs swapfile, `resume` hook, `resume=` drop-in), then checks that `resume_offset` matches `btrfs inspect-internal map-swapfile -r /swap/swapfile` and that the rebuilt command line carries both parameters before asking for a reboot. A resume powers the machine off, and on power-on goes through Limine and the LUKS passphrase prompt as at any boot. See [`docs/hibernation.md`](docs/hibernation.md), including how to tell a real resume from a rolled-back attempt.
+
+**Phase 22 - MT7925 Wi-Fi Hibernate Hook**
+
+Installs `/usr/lib/systemd/system-sleep/mt7925-hibernate`, which unloads `mt7925e` before hibernating and reloads it afterwards. Without it, Wi-Fi is dead after resume (`Message 00020015 ... timeout`, `wiphy_resume ... returns -110`). systemd 262 ignores hooks in `/etc/systemd/system-sleep/`. Logs: `journalctl -b -t mt7925-sleep`.
+
 **Kernel parameters and Limine**
 
-Phases 13 and 20 add kernel parameters as drop-ins in `/etc/limine-entry-tool.d/`. A plain `KERNEL_CMDLINE[default]=` in `/etc/default/limine` (loaded last) discards all of them, so each of these phases checks for one and offers to change it to `+=`. See [`docs/limine-kernel-cmdline.md`](docs/limine-kernel-cmdline.md).
+Phases 13, 20 and 21 add kernel parameters as drop-ins in `/etc/limine-entry-tool.d/`. A plain `KERNEL_CMDLINE[default]=` in `/etc/default/limine` (loaded last) discards all of them, so each of these phases checks for one and offers to change it to `+=`. See [`docs/limine-kernel-cmdline.md`](docs/limine-kernel-cmdline.md).
 
 ## Custom Hyprland keybindings
 
@@ -220,6 +228,8 @@ lib/
   phase16_bambu_scaling.sh     Bambu Studio DPI scaling fix
   phase17_unreal_engine.sh     Unreal Engine 5 installer + Neovim integration
   phase20_amdgpu_display.sh    AMD display freeze fix (dcdebugmask)
+  phase21_hibernation.sh       Hibernation setup + resume_offset/cmdline checks
+  phase22_mt7925_sleep.sh      MT7925 Wi-Fi unload/reload across hibernate
 templates/
   hypr/z13.lua            Z13 Hyprland module (monitors, input, binds, rules) — Phase 4
   rog-profile-notify.sh   Platform profile change notification script
@@ -228,6 +238,7 @@ templates/
   gamescope-hdr-session-steam  HDR session override for Phase 6 (optional, disabled by default)
   patch-heroic-gamescope.sh    Heroic Gamescope compatibility patch
   hibernate-wake-fix.sh   Standalone hibernate wake fix script
+  mt7925-hibernate        systemd-sleep hook: unload/reload MT7925 Wi-Fi across hibernate — Phase 22
   99-thunderbolt-no-d3.rules  Thunderbolt dock udev rules for Phase 10
   controller-gaming-trigger.py   Gamepad combo listener for Phase 11
   controller-gaming-trigger.service  Systemd user service for Phase 11
