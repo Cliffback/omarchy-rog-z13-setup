@@ -28,7 +28,7 @@ In dry-run mode all prompts are auto-answered yes and commands are printed inste
 
 ## What it does
 
-The script runs twenty-two phases in order:
+The script runs twenty-one phases in order:
 
 **Phase 0 - System update**
 
@@ -181,15 +181,9 @@ Installs CHITUBOX Basic from AUR and works around its Hyprland crash with `QT_QP
 
 **Phase 20 - Herdr terminal integration**
 
-Configures Herdr to follow the terminal palette (`[theme] name = "terminal"`) and changes the shipped `surface_dim = "black"` to `"darkgray"` so pane dividers stay visible (omarchy#15235). It also installs `opencode-refresh-theme`, `herdr-attach`, and a user-level `omarchy-launch-terminal-herdr` shadow. Omarchy starts `herdr server` at login, before a client can supply the terminal palette, so restored OpenCode panes cache Herdr's fallback palette. The launcher refreshes those TUIs with SIGUSR2 after the client attaches; `prefix+shift+t` inside Herdr is the manual fallback. The refresh only signals `opencode --session ses_…` TUIs that catch SIGUSR2, never the shared `opencode serve` process.
+Configures Herdr to follow the terminal palette (`[theme] name = "terminal"`) and changes the shipped `surface_dim = "black"` to `"darkgray"` so pane dividers stay visible (omarchy#15235). Omarchy starts `herdr server` at login, before a client can supply the terminal palette, so restored OpenCode panes cache Herdr's fallback palette and stay grey. The phase installs `opencode-refresh-theme` and binds it to `prefix+shift+t`; press that after opening Herdr to make the restored panes re-read the host palette. The helper only signals `opencode --session ses_…` TUIs that catch SIGUSR2, never the shared `opencode serve` process.
 
-Omarchy's own `omarchy-restart-opencode` does not see OpenCode 2 installed by mise because the process is `opencode.exe`, not `opencode` (omarchy#17374, fixed by #17438). Until that lands, this phase's helper is the reliable path.
-
-**Phase 21 - Catppuccin Mocha theme**
-
-Deploys a local `catppuccin-mocha` theme to `~/.config/omarchy/themes/catppuccin-mocha` and applies it. The bundled Omarchy Catppuccin theme is Mocha, but its generated terminal palette maps ANSI 0 to the background and ANSI 7 to the foreground; upstream Catppuccin Mocha uses surface0 (#45475a) and subtext1 (#bac2de), so ANSI black was invisible and the 16-colour palette looked wrong (omarchy#12520). The theme ships hand-written `ghostty.conf`, `alacritty.toml`, `foot.ini`, and `kitty.conf` with the official palette. It is a plain deployed directory, not a git checkout, so Omarchy keeps those files; themes installed with `omarchy theme install` have them stripped. Wallpapers and menu previews are copied from the stock Catppuccin theme at deploy time. Only Catppuccin Mocha is installed.
-
-For the full investigation and upstream references, see [`docs/herdr-opencode-theme.md`](docs/herdr-opencode-theme.md).
+OpenCode stays on `theme: system`, so it follows the same terminal palette as Herdr. Its generated greys are flatter than a fixed theme by design; if exact palette matching matters more than following the system, pin the same fixed theme in both tools instead. See [`docs/herdr-opencode-theme.md`](docs/herdr-opencode-theme.md) for the boot race and the upstream references.
 
 ## Custom Hyprland keybindings
 
@@ -230,7 +224,6 @@ lib/
   phase18_perforce.sh          Perforce CLI + Qt6 visual tools
   phase19_chitubox.sh          CHITUBOX Basic + ChituManager
   phase20_herdr.sh             Herdr terminal-palette integration + OpenCode refresh
-  phase21_theme.sh             Catppuccin Mocha theme (official terminal palette)
 templates/
   hypr/z13.lua            Z13 Hyprland module (monitors, input, binds, rules) — Phase 4
   rog-profile-notify.sh   Platform profile change notification script
@@ -249,17 +242,6 @@ templates/
     unreal-engine.xml     MIME type for .uproject files
   herdr/
     opencode-refresh-theme        SIGUSR2 refresh for OpenCode TUIs (Phase 20)
-    herdr-attach                  Launch/attach Herdr, then refresh OpenCode
-    omarchy-launch-terminal-herdr User-level shadow of Omarchy's launcher
-  theme/catppuccin-mocha/
-    colors.toml           Mocha desktop/bar palette
-    ghostty.conf          Official Catppuccin Mocha ANSI palette
-    alacritty.toml
-    foot.ini
-    kitty.conf
-    neovim.lua            catppuccin-mocha colorscheme
-    vscode.json           Catppuccin Mocha VS Code extension
-    icons.theme           Icon theme
 scripts/
   install-unreal-engine.sh    Standalone UE5 binary installer
   setup-ue-neovim.sh          Neovim/LazyVim UE integration setup

@@ -10,17 +10,19 @@
 #
 # This phase makes Herdr follow the terminal palette (`theme = "terminal"`) and
 # installs a small SIGUSR2 refresh so restored OpenCode TUIs re-read the palette
-# once the client attaches. The shadow launcher is what makes it automatic for
-# the stock SUPER+CTRL+RETURN binding; the prefix+shift+t binding is the manual
-# fallback.
+# after the client attaches. The `prefix+shift+t` binding runs that refresh; it
+# is deliberately manual rather than shadowing Omarchy's terminal launcher.
+#
+# OpenCode stays on `theme = "system"`, so it follows the same terminal palette
+# as Herdr. Its generated grays are flatter than a fixed theme by design; pin a
+# fixed theme in both tools if exact palette matching matters more than
+# following the system.
 
 HERDR_CONFIG_DIR="$HOME/.config/herdr"
 HERDR_CONFIG="$HERDR_CONFIG_DIR/config.toml"
 HERDR_STOCK_CONFIG="/usr/share/omarchy/config/herdr/config.toml"
 
 HERDR_REFRESH_SCRIPT="$HOME/.local/bin/opencode-refresh-theme"
-HERDR_ATTACH_SCRIPT="$HOME/.local/bin/herdr-attach"
-HERDR_LAUNCH_SHADOW="$HOME/.local/bin/omarchy-launch-terminal-herdr"
 
 HERDR_REFRESH_KEY="prefix+shift+t"
 
@@ -129,8 +131,6 @@ phase20_check() {
     [[ "$(toml_section_value "$HERDR_CONFIG" '[theme]' name)" == "terminal" ]] || return 1
     [[ "$(toml_section_value "$HERDR_CONFIG" '[theme.custom]' surface_dim)" == "darkgray" ]] || return 1
     [[ -x "$HERDR_REFRESH_SCRIPT" ]] || return 1
-    [[ -x "$HERDR_ATTACH_SCRIPT" ]] || return 1
-    [[ -x "$HERDR_LAUNCH_SHADOW" ]] || return 1
     file_contains "$HERDR_CONFIG" "opencode-refresh-theme"
 }
 
@@ -183,19 +183,6 @@ EOF
     run_cmd chmod +x "$HERDR_REFRESH_SCRIPT"
     success "Installed $HERDR_REFRESH_SCRIPT"
 
-    info "Installing Herdr attach wrapper..."
-    run_cmd cp "$SCRIPT_DIR/templates/herdr/herdr-attach" "$HERDR_ATTACH_SCRIPT"
-    run_cmd chmod +x "$HERDR_ATTACH_SCRIPT"
-    success "Installed $HERDR_ATTACH_SCRIPT"
-
-    # ~/.local/bin precedes $OMARCHY_PATH/bin on the compositor PATH (see
-    # hypr/z13.lua), so this shadows Omarchy's launcher for both the stock
-    # SUPER+CTRL+RETURN binding and the Omarchy menu entry.
-    info "Installing Herdr launcher shadow..."
-    run_cmd cp "$SCRIPT_DIR/templates/herdr/omarchy-launch-terminal-herdr" "$HERDR_LAUNCH_SHADOW"
-    run_cmd chmod +x "$HERDR_LAUNCH_SHADOW"
-    success "Installed $HERDR_LAUNCH_SHADOW"
-
     if file_contains "$HERDR_CONFIG" "opencode-refresh-theme"; then
         info "OpenCode refresh keybinding already present."
     else
@@ -210,8 +197,8 @@ EOF
             fi
             cat >> "$HERDR_CONFIG" <<EOF
 
-# Refresh OpenCode's generated system theme after Herdr attaches. The Herdr
-# launcher does this automatically; this binding is the manual fallback.
+# Refresh OpenCode's generated system theme after Herdr attaches. Press this
+# after opening Herdr so restored panes re-read the host terminal palette.
 [[keys.command]]
 key = "$HERDR_REFRESH_KEY"
 type = "shell"
@@ -220,11 +207,6 @@ description = "refresh opencode themes"
 EOF
         fi
         success "Refresh keybinding added."
-    fi
-
-    if [[ $DRY_RUN -eq 0 ]] && ! grep -qF 'local pp_bin = home .. "/.local/bin"' "$HOME/.config/hypr/z13.lua" 2>/dev/null; then
-        warn "hypr/z13.lua does not prepend ~/.local/bin to the compositor PATH."
-        warn "The Herdr launcher shadow needs Phase 4; re-run Phase 4 if the automatic refresh does not fire."
     fi
 
     if has_command herdr && herdr status server --json 2>/dev/null | grep -q '"running"[[:space:]]*:[[:space:]]*true'; then
@@ -238,7 +220,7 @@ EOF
         info "Refreshing OpenCode themes in the attached Herdr session..."
         run_cmd "$HERDR_REFRESH_SCRIPT" || true
     else
-        info "No Herdr client attached. After opening Herdr, press $HERDR_REFRESH_KEY (or launch it through the Omarchy binding)."
+        info "No Herdr client attached. After opening Herdr, press $HERDR_REFRESH_KEY to refresh restored panes."
     fi
 
     success "Herdr terminal integration configured."
