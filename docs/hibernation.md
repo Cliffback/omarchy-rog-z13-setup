@@ -104,6 +104,23 @@ journalctl -k -b | grep -E '00020015|wiphy_resume'   # expect nothing after the 
 - Unloading normally takes ~3 s, but up to ~65 s if the MCU is already wedged
   from an earlier failed resume.
 
+## Keyboard backlight
+
+Omarchy's `/usr/lib/systemd/system-sleep/keyboard-backlight` sets every
+`*kbd_backlight*` LED to 0 before hibernate (a lit ASUS keyboard can block S4
+power-off) and has no `post` branch, so the backlight is off after every
+resume. It is also off after a hibernate that never happened: seen 2026-11-24,
+`Failed to put system to sleep. System resumed again: Cannot allocate memory`
+(`Image allocation is ... pages short`) left `asus::kbd_backlight` at 0.
+
+Phase 23 replaces that hook at the same path with
+`templates/keyboard-backlight-sleep`, which saves each level to
+`/run/z13-kbd-backlight/` before zeroing and writes it back on `post` (retrying
+for up to 5 s while the keyboard re-enumerates). It must be one hook: hooks
+run in parallel, so a separate save hook would race Omarchy's turn-off.
+Logs: `journalctl -b -t kbd-backlight-sleep`. If an Omarchy update reinstalls
+its version, Phase 23's check fails and a re-run restores ours.
+
 ## Tested dead ends
 
 - `options mt7925e disable_aspm=1`: no change to the MT7925 timeout.

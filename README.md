@@ -187,6 +187,10 @@ Runs `omarchy-hibernation-setup` (RAM-sized btrfs swapfile, `resume` hook, `resu
 
 Installs `/usr/lib/systemd/system-sleep/mt7925-hibernate`, which unloads `mt7925e` before hibernating and reloads it afterwards. Without it, Wi-Fi is dead after resume (`Message 00020015 ... timeout`, `wiphy_resume ... returns -110`). systemd 262 ignores hooks in `/etc/systemd/system-sleep/`. Logs: `journalctl -b -t mt7925-sleep`.
 
+**Phase 23 - Keyboard Backlight Across Hibernate**
+
+Replaces Omarchy's `/usr/lib/systemd/system-sleep/keyboard-backlight`. Omarchy's hook turns the keyboard backlight off before hibernating (a lit ASUS keyboard can block S4 power-off) but never turns it back on, so it stays off after every resume or failed hibernate. The replacement saves the level to `/run`, turns it off, and restores it on `post`. It has to replace the hook at the same path: systemd-sleep runs hooks in parallel, so a separate hook would race Omarchy's turn-off. If an Omarchy update puts its version back, re-run this phase. Logs: `journalctl -b -t kbd-backlight-sleep`.
+
 **Kernel parameters and Limine**
 
 Phases 13, 20 and 21 add kernel parameters as drop-ins in `/etc/limine-entry-tool.d/`. A plain `KERNEL_CMDLINE[default]=` in `/etc/default/limine` (loaded last) discards all of them, so each of these phases checks for one and offers to change it to `+=`. See [`docs/limine-kernel-cmdline.md`](docs/limine-kernel-cmdline.md).
@@ -230,6 +234,7 @@ lib/
   phase20_amdgpu_display.sh    AMD display freeze fix (dcdebugmask)
   phase21_hibernation.sh       Hibernation setup + resume_offset/cmdline checks
   phase22_mt7925_sleep.sh      MT7925 Wi-Fi unload/reload across hibernate
+  phase23_kbd_backlight_sleep.sh  Keyboard backlight save/restore across hibernate
 templates/
   hypr/z13.lua            Z13 Hyprland module (monitors, input, binds, rules) — Phase 4
   rog-profile-notify.sh   Platform profile change notification script
@@ -239,6 +244,7 @@ templates/
   patch-heroic-gamescope.sh    Heroic Gamescope compatibility patch
   hibernate-wake-fix.sh   Standalone hibernate wake fix script
   mt7925-hibernate        systemd-sleep hook: unload/reload MT7925 Wi-Fi across hibernate — Phase 22
+  keyboard-backlight-sleep  systemd-sleep hook: save/restore keyboard backlight across hibernate — Phase 23
   99-thunderbolt-no-d3.rules  Thunderbolt dock udev rules for Phase 10
   controller-gaming-trigger.py   Gamepad combo listener for Phase 11
   controller-gaming-trigger.service  Systemd user service for Phase 11
