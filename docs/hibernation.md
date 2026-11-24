@@ -121,6 +121,31 @@ run in parallel, so a separate save hook would race Omarchy's turn-off.
 Logs: `journalctl -b -t kbd-backlight-sleep`. If an Omarchy update reinstalls
 its version, Phase 23's check fails and a re-run restores ours.
 
+## Loaded LLMs (Cannot allocate memory)
+
+Hibernation copies every in-use page into free RAM before writing the image,
+so in-use memory has to fit in roughly half of RAM. GPU memory on Strix Halo is
+system RAM and cannot be swapped out first. Seen 2026-11-24 with llama-swap
+holding a model:
+
+```
+gpu_active:81383584kB                       (~78 GB, in the kernel's Mem-Info dump)
+PM: hibernation: Image allocation is 8381632 pages short   (~32 GB)
+systemd-sleep: Failed to put system to sleep. System resumed again: Cannot allocate memory
+```
+
+The swapfile size is irrelevant (121 GB, empty). The successful 2026-11-23
+hibernate needed 12.6M pages with 19.8M available.
+
+Phase 24 installs `z13-llm-unload.service`, wanted by `hibernate.target` and
+ordered before `systemd-hibernate.service`, so it runs before systemd-sleep
+freezes `user.slice` (llama-swap is a user unit). It calls llama-swap's
+`/unload` and Ollama's `keep_alive: 0`, waits up to 20 s for both to report
+nothing loaded, and logs GTT use before/after under
+`journalctl -b -t z13-llm-unload`. A sleep hook would be too late: hooks run
+after the freeze. `suspend-then-hibernate` is not covered; this machine only
+hibernates on request.
+
 ## Tested dead ends
 
 - `options mt7925e disable_aspm=1`: no change to the MT7925 timeout.
