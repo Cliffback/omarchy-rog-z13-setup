@@ -1,0 +1,52 @@
+#!/bin/bash
+# systemd-sleep hook (deployed by Phase 23 to
+# /usr/lib/systemd/system-sleep/keyboard-backlight, replacing Omarchy's hook
+# of the same name). systemd 262 reads hooks only from that directory.
+#
+# Omarchy's hook turns the keyboard backlight off before hibernate, because
+# the ASUS keyboard controller can block S4 power-off while the LEDs are lit,
+# but it never turns it back on. After a resume (or a hibernate that fails,
+# e.g. "Cannot allocate memory") the backlight stays at 0.
+#
+# This keeps the turn-off and adds the restore: the brightness of every
+# kbd_backlight LED is saved to /run before zeroing it and written back on
+# post. /run is RAM, so it is part of the hibernation image and survives both
+# a real resume and an aborted hibernate.
+#
+# The save and the turn-off must be in one hook: systemd-sleep runs hooks in
+# parallel, so a separate "save" hook would race Omarchy's turn-off.
+# Logs: journalctl -b -t kbd-backlight-sleep
+
+action=${SYSTEMD_SLEEP_ACTION:-$2}
+state_dir=/run/z13-kbd-backlight
+
+case "$1:$action" in
+  pre:hibernate)
+    mkdir -p "$state_dir"
+    for led in /sys/class/leds/*kbd_backlight*; do
+      [[ -e $led/brightness ]] || continue
+      name=${led##*/}
+      level=$(<"$led/brightness")
+      printf '%s\n' "$level" >"$state_dir/$name"
+      echo 0 >"$led/brightness" 2>/dev/null
+      logger -t kbd-backlight-sleep "pre $action: $name saved=$level, set 0"
+    done
+    ;;
+  post:hibernate)
+    for saved in "$state_dir"/*; do
+      [[ -f $saved ]] || continue
+      name=${saved##*/}
+      level=$(<"$saved")
+      led=/sys/class/leds/$name
+      # The keyboard can still be re-enumerating right after resume.
+      for _ in 1 2 3 4 5; do
+        [[ -e $led/brightness ]] && echo "$level" >"$led/brightness" 2>/dev/null &&
+          [[ $(<"$led/brightness") == "$level" ]] && break
+        sleep 1
+      done
+      logger -t kbd-backlight-sleep "post $action: $name restore=$level now=$(cat "$led/brightness" 2>/dev/null || echo missing)"
+      rm -f "$saved"
+    done
+    ;;
+esac
+exit 0
