@@ -36,6 +36,7 @@ source "$SCRIPT_DIR/lib/phase20_amdgpu_display.sh"
 source "$SCRIPT_DIR/lib/phase21_hibernation.sh"
 source "$SCRIPT_DIR/lib/phase22_mt7925_sleep.sh"
 source "$SCRIPT_DIR/lib/phase23_kbd_backlight_sleep.sh"
+source "$SCRIPT_DIR/lib/phase24_llm_unload_hibernate.sh"
 
 # Track state
 NEEDS_REBOOT=0
@@ -130,6 +131,7 @@ run_phase 20 "AMD Display Freeze Fix (DMCUB)" phase20_check phase20_run || true
 run_phase 21 "Hibernation (optional)" phase21_check phase21_run || true
 run_phase 22 "MT7925 Wi-Fi Hibernate Hook" phase22_check phase22_run || true
 run_phase 23 "Keyboard Backlight Across Hibernate" phase23_check phase23_run || true
+run_phase 24 "Unload LLMs Before Hibernate" phase24_check phase24_run || true
 
 # ── Summary ──────────────────────────────────────────────────────────────
 

@@ -1,0 +1,76 @@
+#!/bin/bash
+# Unload local LLMs before hibernate (deployed by Phase 24 to
+# /usr/local/bin/z13-llm-unload, run by z13-llm-unload.service).
+#
+# On Strix Halo the GPU's memory is system RAM and cannot be swapped out.
+# Hibernation first copies every in-use page into free RAM, so a loaded model
+# makes it fail: 2026-11-24, ~78 GB held by llama-swap's llama-server gave
+#   PM: hibernation: Image allocation is 8381632 pages short
+#   systemd-sleep: Failed to put system to sleep ... Cannot allocate memory
+#
+# Runs before systemd-hibernate.service starts, i.e. before systemd-sleep
+# freezes user.slice, so the user-level llama-swap service still answers.
+# A server that is not running is skipped; this never blocks the hibernate.
+# Logs: journalctl -b -t z13-llm-unload
+#
+# Endpoints can be overridden in /etc/default/z13-llm-unload.
+
+LLAMA_SWAP_URL=${LLAMA_SWAP_URL:-http://127.0.0.1:8000}
+OLLAMA_URL=${OLLAMA_URL:-http://127.0.0.1:11434}
+
+log() { logger -t z13-llm-unload "$*"; }
+
+gtt_mib() {
+    local f total=0
+    for f in /sys/class/drm/card*/device/mem_info_gtt_used; do
+        [[ -r $f ]] && total=$((total + $(<"$f")))
+    done
+    echo $((total / 1048576))
+}
+
+llama_swap_running() {
+    curl -fsS -m 5 "$LLAMA_SWAP_URL/running" 2>/dev/null | jq -r '.running[]? | .model // .name // empty' 2>/dev/null
+}
+
+ollama_running() {
+    curl -fsS -m 5 "$OLLAMA_URL/api/ps" 2>/dev/null | jq -r '.models[]?.name // empty' 2>/dev/null
+}
+
+log "before: gtt_used=$(gtt_mib)MiB"
+
+if curl -fsS -m 5 "$LLAMA_SWAP_URL/running" >/dev/null 2>&1; then
+    loaded=$(llama_swap_running | paste -sd, -)
+    if curl -fsS -m 45 "$LLAMA_SWAP_URL/unload" >/dev/null 2>&1; then
+        log "llama-swap: unloaded [${loaded:-none}]"
+    else
+        log "llama-swap: unload request failed [${loaded:-none}]"
+    fi
+else
+    log "llama-swap: not reachable at $LLAMA_SWAP_URL, skipped"
+fi
+
+if curl -fsS -m 5 "$OLLAMA_URL/api/ps" >/dev/null 2>&1; then
+    [[ -n $(ollama_running) ]] || log "ollama: nothing loaded"
+    while IFS= read -r model; do
+        [[ -n $model ]] || continue
+        if curl -fsS -m 30 "$OLLAMA_URL/api/generate" \
+            -d "$(jq -nc --arg m "$model" '{model: $m, keep_alive: 0}')" >/dev/null 2>&1; then
+            log "ollama: unloaded $model"
+        else
+            log "ollama: unload failed for $model"
+        fi
+    done < <(ollama_running)
+else
+    log "ollama: not reachable at $OLLAMA_URL, skipped"
+fi
+
+# Unload requests can return before the server process has released its
+# memory; wait (bounded) until nothing is reported as loaded.
+for _ in $(seq 1 20); do
+    [[ -z $(llama_swap_running) && -z $(ollama_running) ]] && break
+    sleep 1
+done
+
+left=$( { llama_swap_running; ollama_running; } | paste -sd, -)
+log "after: gtt_used=$(gtt_mib)MiB${left:+ still_loaded=[$left]}"
+exit 0

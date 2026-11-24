@@ -191,6 +191,10 @@ Installs `/usr/lib/systemd/system-sleep/mt7925-hibernate`, which unloads `mt7925
 
 Replaces Omarchy's `/usr/lib/systemd/system-sleep/keyboard-backlight`. Omarchy's hook turns the keyboard backlight off before hibernating (a lit ASUS keyboard can block S4 power-off) but never turns it back on, so it stays off after every resume or failed hibernate. The replacement saves the level to `/run`, turns it off, and restores it on `post`. It has to replace the hook at the same path: systemd-sleep runs hooks in parallel, so a separate hook would race Omarchy's turn-off. If an Omarchy update puts its version back, re-run this phase. Logs: `journalctl -b -t kbd-backlight-sleep`.
 
+**Phase 24 - Unload LLMs Before Hibernate**
+
+Installs `z13-llm-unload.service` (wanted by `hibernate.target` and `hybrid-sleep.target`), which asks llama-swap (`/unload`, port 8000) and Ollama (`keep_alive: 0`, port 11434) to unload their models before the machine hibernates. The GPU's memory is system RAM that cannot be swapped, and hibernation needs free RAM to copy every in-use page into, so a loaded model of tens of GB makes `systemctl hibernate` fail with `Cannot allocate memory`. A server that isn't running is skipped. Override the endpoints in `/etc/default/z13-llm-unload`. Test without hibernating: `sudo systemctl start z13-llm-unload`. Logs: `journalctl -b -t z13-llm-unload`.
+
 **Kernel parameters and Limine**
 
 Phases 13, 20 and 21 add kernel parameters as drop-ins in `/etc/limine-entry-tool.d/`. A plain `KERNEL_CMDLINE[default]=` in `/etc/default/limine` (loaded last) discards all of them, so each of these phases checks for one and offers to change it to `+=`. See [`docs/limine-kernel-cmdline.md`](docs/limine-kernel-cmdline.md).
@@ -235,6 +239,7 @@ lib/
   phase21_hibernation.sh       Hibernation setup + resume_offset/cmdline checks
   phase22_mt7925_sleep.sh      MT7925 Wi-Fi unload/reload across hibernate
   phase23_kbd_backlight_sleep.sh  Keyboard backlight save/restore across hibernate
+  phase24_llm_unload_hibernate.sh Unload llama-swap/Ollama models before hibernate
 templates/
   hypr/z13.lua            Z13 Hyprland module (monitors, input, binds, rules) — Phase 4
   rog-profile-notify.sh   Platform profile change notification script
@@ -245,6 +250,8 @@ templates/
   hibernate-wake-fix.sh   Standalone hibernate wake fix script
   mt7925-hibernate        systemd-sleep hook: unload/reload MT7925 Wi-Fi across hibernate — Phase 22
   keyboard-backlight-sleep  systemd-sleep hook: save/restore keyboard backlight across hibernate — Phase 23
+  z13-llm-unload          Unloads llama-swap/Ollama models before hibernate — Phase 24
+  systemd/system/z13-llm-unload.service  Runs it before systemd-hibernate.service — Phase 24
   99-thunderbolt-no-d3.rules  Thunderbolt dock udev rules for Phase 10
   controller-gaming-trigger.py   Gamepad combo listener for Phase 11
   controller-gaming-trigger.service  Systemd user service for Phase 11
