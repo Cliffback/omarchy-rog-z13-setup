@@ -1,9 +1,10 @@
 [Unit]
 Description=Unload local LLMs so hibernation has RAM for its image
 Documentation=file:///usr/local/bin/z13-llm-unload
-# Pulled in by the hibernate targets and ordered before the sleep service, so
+# Pulled in by the hibernate targets (suspend-then-hibernate: at lid close,
+# since its hibernate step never passes through hibernate.target) and ordered before the sleep service, so
 # it runs before systemd-sleep freezes user.slice (llama-swap is a user unit).
-Before=systemd-hibernate.service systemd-hybrid-sleep.service
+Before=systemd-hibernate.service systemd-hybrid-sleep.service systemd-suspend-then-hibernate.service
 
 [Service]
 Type=oneshot
@@ -12,4 +13,4 @@ ExecStart=/usr/local/bin/z13-llm-unload
 TimeoutStartSec=90
 
 [Install]
-WantedBy=hibernate.target hybrid-sleep.target
+WantedBy=hibernate.target hybrid-sleep.target suspend-then-hibernate.target
