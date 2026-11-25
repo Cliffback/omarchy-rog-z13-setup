@@ -38,6 +38,7 @@ source "$SCRIPT_DIR/lib/phase22_mt7925_sleep.sh"
 source "$SCRIPT_DIR/lib/phase23_kbd_backlight_sleep.sh"
 source "$SCRIPT_DIR/lib/phase24_llm_unload_hibernate.sh"
 source "$SCRIPT_DIR/lib/phase25_hibernate_mode.sh"
+source "$SCRIPT_DIR/lib/phase26_lid_hibernate.sh"
 
 # Track state
 NEEDS_REBOOT=0
@@ -134,8 +135,9 @@ run_phase 22 "MT7925 Wi-Fi Hibernate Hook" phase22_check phase22_run || true
 run_phase 23 "Keyboard Backlight Across Hibernate" phase23_check phase23_run || true
 run_phase 24 "Unload LLMs Before Hibernate" phase24_check phase24_run || true
 run_phase 25 "Hibernate Power-off Mode (S5)" phase25_check phase25_run || true
+run_phase 26 "Lid Close Hibernates" phase26_check phase26_run || true
 
-# Reboot prompt for phases 2–25: boot-image rebuilds (any Limine change,
+# Reboot prompt for phases 2–26: boot-image rebuilds (any Limine change,
 # phases 13/20/21) and amplifier firmware (phase 9) only apply after a reboot.
 if [[ $NEEDS_REBOOT -eq 1 ]]; then
     echo ""

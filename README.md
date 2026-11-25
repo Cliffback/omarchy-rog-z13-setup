@@ -199,6 +199,10 @@ Installs `z13-llm-unload.service` (wanted by `hibernate.target` and `hybrid-slee
 
 Installs `/etc/systemd/sleep.conf.d/z13-hibernate-mode.conf` with `HibernateMode=shutdown`. By default (`platform`), hibernation ends with the firmware's ACPI S4 entry. On this machine that step once hung after the image was written: the screen went black, the power button did nothing, and a hard power-off was needed (the image then resumed). With `shutdown`, the machine powers off through S5, like a normal shutdown. No reboot needed.
 
+**Phase 26 - Lid Close Hibernates**
+
+Closing the lid suspends, then hibernates after 15 minutes (or earlier below 5% battery), on battery and on AC. Docked, closing the lid does nothing; a Suspend from the menu stays a plain suspend. While awake, UPower hibernates at 5% battery instead of its default action at 2%. Installs `/etc/systemd/logind.conf.d/30-z13-lid-hibernate.conf`, `/etc/systemd/sleep.conf.d/z13-hibernate-delay.conf` and `/etc/UPower/UPower.conf.d/70-z13-critical-hibernate.conf`. Suspend drained ~8–9%/h on this machine, which is why a closed lid should not stay suspended for long.
+
 **Kernel parameters and Limine**
 
 Phases 13, 20 and 21 add kernel parameters as drop-ins in `/etc/limine-entry-tool.d/`. A plain `KERNEL_CMDLINE[default]=` in `/etc/default/limine` (loaded last) discards all of them, so each of these phases checks for one and offers to change it to `+=`. See [`docs/limine-kernel-cmdline.md`](docs/limine-kernel-cmdline.md).
@@ -245,6 +249,7 @@ lib/
   phase23_kbd_backlight_sleep.sh  Keyboard backlight save/restore across hibernate
   phase24_llm_unload_hibernate.sh Unload llama-swap/Ollama models before hibernate
   phase25_hibernate_mode.sh     HibernateMode=shutdown (power off via S5)
+  phase26_lid_hibernate.sh      Lid close: suspend, then hibernate after 15 min
 templates/
   hypr/z13.lua            Z13 Hyprland module (monitors, input, binds, rules) — Phase 4
   rog-profile-notify.sh   Platform profile change notification script

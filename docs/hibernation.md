@@ -22,6 +22,8 @@ Requirements, all handled by the installer:
 | Keyboard backlight saved/restored | `/usr/lib/systemd/system-sleep/keyboard-backlight` | 23 |
 | LLMs unloaded first | `z13-llm-unload.service` | 24 |
 | `HibernateMode=shutdown` (power off via S5) | `/etc/systemd/sleep.conf.d/z13-hibernate-mode.conf` | 25 |
+| Lid close: suspend, hibernate after 15 min | `/etc/systemd/logind.conf.d/30-z13-lid-hibernate.conf`, `/etc/systemd/sleep.conf.d/z13-hibernate-delay.conf` | 26 |
+| Critical battery hibernates | `/etc/UPower/UPower.conf.d/70-z13-critical-hibernate.conf` | 26 |
 
 ## What a hibernate looks like
 
@@ -133,6 +135,42 @@ kernel log for the S4 line above. If shutdown mode hangs too, the ACPI S4 path i
 ruled out. The next suspects are the detachable keyboard (test with it unplugged)
 and amd_pmc state after s2idle, bisected with `/sys/power/pm_test`.
 
+## Lid close and low battery
+
+| Situation | What happens (Phase 26) |
+| --- | --- |
+| Lid closed, battery or AC | Suspend; hibernate after 15 min, or earlier below 5% battery |
+| Lid closed, docked / external display | Nothing (`HandleLidSwitchDocked=ignore`) |
+| Suspend from the menu (`systemctl suspend`) | Plain suspend, no later hibernate |
+| Battery reaches 5% while awake | UPower hibernates (warning at 8%) |
+
+**Why:** a closed-lid s2idle suspend on 2026-11-24 drained the battery from
+~53% to 27% in under 3 hours (about 8–9%/h). UPower is frozen during suspend, so
+a plain suspend never reacts to a low battery: the machine runs flat and the
+session is lost. Before Phase 26, UPower's `CriticalPowerAction=Auto` resolved
+to logind's `Sleep` (via `SleepOperation=`) at 2%.
+
+**What a lid close looks like:** `systemd-suspend-then-hibernate.service`
+suspends, an RTC alarm wakes the machine after `HibernateDelaySec=`, and it then
+hibernates. Open the lid within 15 minutes and it wakes instantly; later, it
+comes back through Limine and the LUKS prompt. Sleep hooks are called once
+per step with `SYSTEMD_SLEEP_ACTION` set to `suspend`, then `hibernate`, so
+`mt7925-sleep` and `kbd-backlight-sleep` log a `pre suspend`/`post suspend` pair
+followed by `pre hibernate`/`post hibernate`.
+
+```bash
+journalctl -b -u systemd-suspend-then-hibernate.service
+journalctl -b -t mt7925-sleep -t kbd-backlight-sleep -t z13-llm-unload
+```
+
+To test without waiting, temporarily set `HibernateDelaySec=2min` in
+`/etc/systemd/sleep.conf.d/z13-hibernate-delay.conf` (read on every sleep; no
+reload needed).
+
+**Open question:** 8–9%/h is high for s2idle on Strix Halo and suggests the
+SoC does not reach its deepest state. `/sys/kernel/debug/amd_pmc/s0ix_stats`
+(root) and `amd_s2idle.py` from the kernel tree would show it; not yet checked.
+
 ## MT7925 Wi-Fi
 
 Without the hook, restore logs:
@@ -196,8 +234,9 @@ freezes `user.slice` (llama-swap is a user unit). It calls llama-swap's
 `/unload` and Ollama's `keep_alive: 0`, waits up to 20 s for both to report
 nothing loaded, and logs GTT use before/after under
 `journalctl -b -t z13-llm-unload`. A sleep hook would be too late: hooks run
-after the freeze. `suspend-then-hibernate` is not covered; this machine only
-hibernates on request.
+after the freeze. It is also wanted by `suspend-then-hibernate.target`, so a
+lid close unloads models up front: the later hibernate step never passes
+through `hibernate.target`.
 
 ## Tested dead ends
 
