@@ -1,0 +1,8 @@
+[Unit]
+Description=Z13 power-profile health check
+# Report-only: a warning is logged and notified, and exits 1 so the unit shows
+# up in `systemctl --user --failed` until the next run clears it.
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/z13-power-health run

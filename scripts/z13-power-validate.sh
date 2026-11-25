@@ -62,6 +62,31 @@ count_since_start() {
 # authoritative flap count and is not subject to sampling rate.
 count_ac_events() { count_since_start "External power supply state changed"; }
 
+# Bursts: groups of >=3 AC-off edges with no more than 30 s between consecutive
+# edges. Same definition as z13-power-health's bursts_1h: one flap is two edges,
+# three or more off-edges close together is the regime that can outlast the
+# debounce. Needs epoch timestamps, so it cannot reuse count_since_start.
+count_ac_bursts() {
+  local since bursts
+  since=$(cat "$STARTFILE" 2>/dev/null || echo 0)
+  bursts=$(journalctl -b --since "@${since}" -o short-unix --no-pager 2>/dev/null \
+    | grep -F 'External power supply state changed: false' \
+    | awk '
+        match($0, /^[0-9]+(\.[0-9]+)?/) { ts[n++] = substr($0, 1, RLENGTH) + 0 }
+        END {
+          i = 0
+          while (i < n) {
+            j = i
+            while (j + 1 < n && ts[j+1] - ts[j] <= 30) j++
+            if (j - i + 1 >= 3) bursts++
+            i = j + 1
+          }
+          print bursts + 0
+        }
+      ') || bursts=0
+  echo "${bursts:-0}"
+}
+
 # asusd rewrites the fan curve on every platform-profile change AND on every
 # AC-line notify. With the debounce the first source is gone, so this count is
 # (about) twice the AC-event count, one write each for CPU and GPU.
@@ -74,6 +99,10 @@ count_ppd() { count_since_start "omarchy-powerprofiles-set"; }
 # never settles, and "profile already" for a no-op.
 count_z13_applied()   { count_since_start "z13-powerprofiles.*applying"; }
 count_z13_absorbed()  { count_since_start "z13-powerprofiles.*leaving profile unchanged"; }
+# A skip is the dedupe guard working (an event arrived while another run was
+# settling), not a failure; a sustained non-zero count with no applied lines is
+# what the health timer treats as a leak.
+count_z13_skipped()   { count_since_start "z13-powerprofiles.*skipped:"; }
 
 # Which profile-switch path owns AC/battery right now.
 battery_service() {
@@ -300,6 +329,8 @@ print_report() {
   echo "path:                     $(battery_service)"
   echo "applied (incl. explicit): $(count_z13_applied)"
   echo "absorbed (storm):         $(count_z13_absorbed)"
+  echo "skipped (dedupe):         $(count_z13_skipped)"
+  echo "AC bursts (>=3 edges):    $(count_ac_bursts)"
   echo
 
   echo "=========================================================="
@@ -379,6 +410,8 @@ cmd_status() {
   printf 'asusd fan-curve writes:     %s\n' "$(count_fan_curves)"
   printf 'wrapper applied:            %s\n' "$(count_z13_applied)"
   printf 'wrapper absorbed:           %s\n' "$(count_z13_absorbed)"
+  printf 'wrapper skipped:            %s\n' "$(count_z13_skipped)"
+  printf 'AC bursts (>=3 edges):      %s\n' "$(count_ac_bursts)"
   printf 'switch path:                %s\n' "$(battery_service)"
   echo
   if [[ -f $PIDFILE ]] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
