@@ -177,6 +177,9 @@ rebuild_limine_and_verify() {
     local log rc=0
     log=$(mktemp)
     sudo limine-mkinitcpio 2>&1 | tee "$log" || rc=$?
+    # The boot images were rewritten (even on failure), so the end-of-run
+    # prompt must offer a reboot.
+    NEEDS_REBOOT=1
     if (( rc != 0 )) || grep -q 'mkinitcpio failed for kernel' "$log"; then
         rm -f "$log"
         error "limine-mkinitcpio failed; see its output above."
