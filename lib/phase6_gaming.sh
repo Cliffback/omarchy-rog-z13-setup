@@ -14,11 +14,20 @@ heroic_installed() {
     is_pkg_installed heroic-games-launcher-bin || is_pkg_installed heroic-games-launcher
 }
 
+# The deployed control-panel plugin carries the DeckShift version in its
+# manifest, so a submodule bump (e.g. the 0.2.3 sudoers fix) makes this phase
+# run again instead of passing on file presence alone.
+deckshift_plugin_current() {
+    cmp -s "$SCRIPT_DIR/templates/deckshift/plugins/nosignal.deckshift/manifest.json" \
+        "$HOME/.config/omarchy/plugins/nosignal.deckshift/manifest.json"
+}
+
 phase6_check() {
     deckshift_ready \
         && is_pkg_installed gamescope \
         && [[ -f /usr/share/wayland-sessions/gamescope-session-steam-nm.desktop ]] \
         && deckshift_applied \
+        && deckshift_plugin_current \
         && [[ -d "$HOME/homebrew/services" ]] \
         && [[ -d "$HOME/homebrew/plugins/SimpleDeckyTDP" ]] \
         && heroic_installed \
