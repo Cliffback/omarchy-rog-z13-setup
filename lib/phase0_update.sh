@@ -4,21 +4,11 @@
 phase0_check() {
     local up_to_date=true
 
-    # Check for pending package updates
-    if pacman -Qu 2>/dev/null | grep -q .; then
+    # Pending package updates, not counting IgnorePkg entries (pacman lists
+    # them as "[ignored]"; an update cannot install them). Omarchy itself is a
+    # pacman package, so this covers it too.
+    if pacman -Qu 2>/dev/null | grep -v '\[ignored\]$' | grep -q .; then
         up_to_date=false
-    fi
-
-    # Check omarchy version against latest release
-    if has_command omarchy-version; then
-        local current latest
-        current=$(omarchy-version 2>/dev/null || echo "unknown")
-        latest=$(curl -sf "https://api.github.com/repos/basecamp/omarchy/releases/latest" \
-            | grep -oP '"tag_name":\s*"\K[^"]+' 2>/dev/null || echo "unknown")
-        latest="${latest#v}"
-        if [[ "$current" != "unknown" && "$latest" != "unknown" && "$current" != "$latest" ]]; then
-            up_to_date=false
-        fi
     fi
 
     $up_to_date
