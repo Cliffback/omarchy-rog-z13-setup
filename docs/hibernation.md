@@ -5,8 +5,10 @@
 **Works.** Verified 2026-11-23 on GZ302EA, BIOS 314 (2026-07-20),
 linux-cachyos 7.3.4-1, systemd 262.2, Limine + UKI, LUKS (`encrypt` hook) on
 btrfs, 128 GB RAM. Five consecutive `systemctl hibernate` runs wrote an image,
-powered off and restored the session after the LUKS passphrase. Both
-`HibernateMode=platform` (default) and `shutdown` worked.
+powered off and restored the session after the LUKS passphrase (four with
+`HibernateMode=platform`, the default, and one with `shutdown`). On
+2026-11-24 a platform-mode hibernate hung at power-off, so Phase 25 now sets
+`shutdown`; see [Power-off hang](#power-off-hang-platform-s4).
 
 Requirements, all handled by the installer:
 
@@ -17,6 +19,9 @@ Requirements, all handled by the installer:
 | `resume=` + `resume_offset=` on the command line | `/etc/limine-entry-tool.d/resume.conf` | 21 |
 | No plain `KERNEL_CMDLINE[default]=` in `/etc/default/limine` | see [limine-kernel-cmdline.md](limine-kernel-cmdline.md) | 13/20/21 guard |
 | MT7925 Wi-Fi unloaded across hibernate | `/usr/lib/systemd/system-sleep/mt7925-hibernate` | 22 |
+| Keyboard backlight saved/restored | `/usr/lib/systemd/system-sleep/keyboard-backlight` | 23 |
+| LLMs unloaded first | `z13-llm-unload.service` | 24 |
+| `HibernateMode=shutdown` (power off via S5) | `/etc/systemd/sleep.conf.d/z13-hibernate-mode.conf` | 25 |
 
 ## What a hibernate looks like
 
@@ -79,6 +84,49 @@ and device firmware (MT7925, CS35L41 amplifiers) reloads.
   rebooted.
 - **Swap shows 0 B used after resume.** The image is not counted as used swap,
   and the kernel invalidates it on resume.
+
+## Power-off hang (platform S4)
+
+**Symptom (2026-11-24 22:14).** `systemctl hibernate`, the screen goes black,
+and the machine never reaches a state the power button can wake. Holding the
+power button forces it off. The next power-on goes through Limine and LUKS, and
+the session resumes. The image was complete, so the hang came **after** the
+image write, in the final power-off. That kernel's messages are lost (see Traps).
+
+**What was different.** With `HibernateMode=platform` (systemd's default), the
+kernel finishes through the firmware's ACPI S4 entry (`_PTS`, EC stop, SLP_TYP
+S4). With `shutdown`, it calls the normal power-off (S5). The kernel log of the
+snapshot phase shows which path ran:
+
+```bash
+journalctl -b -k | grep -E "hibernation entry|Preparing to enter system sleep state S4|hibernation exit"
+# an "S4" line between entry and exit = platform mode
+```
+
+| Run | Mode | Result |
+| --- | --- | --- |
+| 11-23 09:35, 09:43, 09:49, 09:56 | platform | OK |
+| 11-23 10:02 | shutdown | OK |
+| 11-24 15:52 | (ENOMEM, LLM loaded) | rolled back |
+| 11-24 15:54–18:50 | s2idle suspend in the same kernel | OK |
+| 11-24 22:14 | platform | **hung at power-off** |
+
+The hung run was the first S4 after an s2idle cycle in that kernel's lifetime.
+The hooks, asusd and the MT7925 unload behaved as in the good runs. One failure
+is not proof. Omarchy's own `keyboard-backlight` hook, though, exists because "the
+ASUS keyboard controller can block S4 shutdown", and S5 is the path every normal
+shutdown takes. Last winter, "the next hibernate after a good one fails" was
+seen and never diagnosed. This may be the same thing.
+
+**Fix:** Phase 25, `/etc/systemd/sleep.conf.d/z13-hibernate-mode.conf`:
+`HibernateMode=shutdown`. systemd-sleep reads it on every run, so it needs no
+reload. Check it with `systemd-analyze cat-config systemd/sleep.conf`.
+
+**If it happens again:** a hard power-off is safe once the screen is black,
+because the image is already on disk and the next boot resumes it. Then check the
+kernel log for the S4 line above. If shutdown mode hangs too, the ACPI S4 path is
+ruled out. The next suspects are the detachable keyboard (test with it unplugged)
+and amd_pmc state after s2idle, bisected with `/sys/power/pm_test`.
 
 ## MT7925 Wi-Fi
 
@@ -149,8 +197,6 @@ hibernates on request.
 ## Tested dead ends
 
 - `options mt7925e disable_aspm=1`: no change to the MT7925 timeout.
-- `HibernateMode=shutdown`: not needed. It was added while hibernation was
-  wrongly believed to fail; both modes resume.
 - BIOS/firmware hunt and `pm_test` bisecting: not needed. The "failure" was
   a misread log (see Traps).
 

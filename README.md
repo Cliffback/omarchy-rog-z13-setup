@@ -195,6 +195,10 @@ Replaces Omarchy's `/usr/lib/systemd/system-sleep/keyboard-backlight`. Omarchy's
 
 Installs `z13-llm-unload.service` (wanted by `hibernate.target` and `hybrid-sleep.target`), which asks llama-swap (`/unload`, port 8000) and Ollama (`keep_alive: 0`, port 11434) to unload their models before the machine hibernates. The GPU's memory is system RAM that cannot be swapped, and hibernation needs free RAM to copy every in-use page into, so a loaded model of tens of GB makes `systemctl hibernate` fail with `Cannot allocate memory`. A server that isn't running is skipped. Override the endpoints in `/etc/default/z13-llm-unload`. Test without hibernating: `sudo systemctl start z13-llm-unload`. Logs: `journalctl -b -t z13-llm-unload`.
 
+**Phase 25 - Hibernate Power-off Mode (S5)**
+
+Installs `/etc/systemd/sleep.conf.d/z13-hibernate-mode.conf` with `HibernateMode=shutdown`. By default (`platform`), hibernation ends with the firmware's ACPI S4 entry. On this machine that step once hung after the image was written: the screen went black, the power button did nothing, and a hard power-off was needed (the image then resumed). With `shutdown`, the machine powers off through S5, like a normal shutdown. No reboot needed.
+
 **Kernel parameters and Limine**
 
 Phases 13, 20 and 21 add kernel parameters as drop-ins in `/etc/limine-entry-tool.d/`. A plain `KERNEL_CMDLINE[default]=` in `/etc/default/limine` (loaded last) discards all of them, so each of these phases checks for one and offers to change it to `+=`. See [`docs/limine-kernel-cmdline.md`](docs/limine-kernel-cmdline.md).
@@ -240,6 +244,7 @@ lib/
   phase22_mt7925_sleep.sh      MT7925 Wi-Fi unload/reload across hibernate
   phase23_kbd_backlight_sleep.sh  Keyboard backlight save/restore across hibernate
   phase24_llm_unload_hibernate.sh Unload llama-swap/Ollama models before hibernate
+  phase25_hibernate_mode.sh     HibernateMode=shutdown (power off via S5)
 templates/
   hypr/z13.lua            Z13 Hyprland module (monitors, input, binds, rules) — Phase 4
   rog-profile-notify.sh   Platform profile change notification script

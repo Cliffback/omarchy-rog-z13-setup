@@ -8,6 +8,12 @@
 # DeckShift's own installer/verifier, run from the submodule.
 DECKSHIFT_SCRIPT="$SCRIPT_DIR/templates/deckshift/deckshift.sh"
 
+# Either the AUR/omarchy -bin build or CachyOS's heroic-games-launcher counts;
+# installing -bin next to the CachyOS package would conflict.
+heroic_installed() {
+    is_pkg_installed heroic-games-launcher-bin || is_pkg_installed heroic-games-launcher
+}
+
 phase6_check() {
     deckshift_ready \
         && is_pkg_installed gamescope \
@@ -15,7 +21,7 @@ phase6_check() {
         && deckshift_applied \
         && [[ -d "$HOME/homebrew/services" ]] \
         && [[ -d "$HOME/homebrew/plugins/SimpleDeckyTDP" ]] \
-        && is_pkg_installed heroic-games-launcher-bin \
+        && heroic_installed \
         && [[ -f "$HOME/Applications/EmuDeck.AppImage" ]] \
         && [[ -f "$HOME/Applications/.emudeck-version" ]]
 }
@@ -147,7 +153,7 @@ phase6_run() {
     fi
 
     # --- Heroic Games Launcher ---
-    if is_pkg_installed heroic-games-launcher-bin; then
+    if heroic_installed; then
         success "Heroic Games Launcher already installed."
     elif [[ $DRY_RUN -eq 1 ]]; then
         info "Would prompt to install Heroic Games Launcher (Epic/GOG/Amazon)"
