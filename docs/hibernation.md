@@ -122,6 +122,11 @@ seen and never diagnosed. This may be the same thing.
 `HibernateMode=shutdown`. systemd-sleep reads it on every run, so it needs no
 reload. Check it with `systemd-analyze cat-config systemd/sleep.conf`.
 
+Validated 2026-11-25 after a reboot: three hibernates in shutdown mode, one
+straight after an s2idle suspend (the sequence that hung). All three powered off,
+woke on the power button and really resumed (no `S4` line, `HibernateLocation`
+removed, ~9 s monotonic against a ~2.5 min gap).
+
 **If it happens again:** a hard power-off is safe once the screen is black,
 because the image is already on disk and the next boot resumes it. Then check the
 kernel log for the S4 line above. If shutdown mode hangs too, the ACPI S4 path is
