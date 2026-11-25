@@ -92,13 +92,14 @@ Note: For optimal performance with large models (30B+), set iGPU memory allocati
 
 **Phase 9 - Audio Amplifier Gain (optional)**
 
-Increases the CS35L41 speaker amplifier gain from 15.5dB (default) to 19.5dB by symlinking firmware bincfg files. This is a hardware-level fix that makes the speakers significantly louder, closer to Windows/Dolby volume levels. Note: very high volume (above ~80%) may cause minor bass distortion on low frequencies, which is normal for laptop speakers at full power. Requires a reboot to take effect. See [this investigation](https://dev.to/ankk98/rog-flow-z13-2025-linux-audio-quality-investigation-3ggk) for background.
+Increases the CS35L41 speaker amplifier gain from 15.5dB (default) to 19.5dB by symlinking firmware bincfg files. This is a hardware-level fix that makes the speakers significantly louder, closer to Windows/Dolby volume levels. Note: very high volume (above ~80%) may cause minor bass distortion on low frequencies, which is normal for laptop speakers at full power. Requires a reboot to take effect. `linux-firmware-cirrus` owns those symlinks and resets them to 15.5dB on every update, so the phase also installs the pacman hook `/etc/pacman.d/hooks/z13-cs35l41-gain.hook`, which runs `/usr/local/bin/z13-cs35l41-gain` after each install or upgrade of that package and puts 19.5dB back (reboot afterwards to hear it). See [this investigation](https://dev.to/ankk98/rog-flow-z13-2025-linux-audio-quality-investigation-3ggk) for background.
 
 To revert to default gain (15.5dB):
 ```bash
 cd /lib/firmware/cirrus
 sudo ln -sf cs35l41/bincfgs/cs35l41-dsp1-15_5dB.bincfg.zst cs35l41-dsp1-spk-prot-10431fb3-l0.bincfg.zst
 sudo ln -sf cs35l41/bincfgs/cs35l41-dsp1-15_5dB.bincfg.zst cs35l41-dsp1-spk-prot-10431fb3-r0.bincfg.zst
+sudo rm /etc/pacman.d/hooks/z13-cs35l41-gain.hook /usr/local/bin/z13-cs35l41-gain   # or the next firmware update restores 19.5dB
 # Then reboot
 ```
 

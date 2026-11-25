@@ -1,0 +1,12 @@
+# Z13: linux-firmware-cirrus resets the CS35L41 speaker gain links to 15.5 dB on
+# every update; put them back to 19.5 dB. Deployed by omarchy-rog-z13-setup Phase 9.
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = linux-firmware-cirrus
+
+[Action]
+Description = Restoring Z13 speaker amplifier gain (19.5 dB)...
+When = PostTransaction
+Exec = /usr/local/bin/z13-cs35l41-gain
