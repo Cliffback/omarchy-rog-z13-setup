@@ -289,6 +289,20 @@ health ok profile=performance expected=performance source=ac sentinel=absent \
 for scripts, and `--fix` clears a stale sentinel and re-applies the state-file
 profile for the current source.
 
+### Fan-curve writes are cosmetic while the custom curves are off
+
+asusd still logs `write_profile_curve_to_platform` on every AC-line notify. With
+the repo's default — custom fan curves disabled (Phase 2b) — the write still
+reaches the platform, but with `enabled: false` the EC keeps its own per-profile
+table in charge, so the fan effect is cosmetic. A flat fan RPM across an AC
+transition is therefore expected and does not mean the write is harmless in
+every configuration.
+
+With a custom curve enabled, the same write was observed to pin fan 2 at
+~6300 RPM on GZ302EA (BIOS 314); controlled re-tests at 45–50 °C did not
+reproduce it. The 2026-10-10 baseline (4700–5100 RPM under stress) was captured
+with curves off. See [z13-fan-curve-gz302ea.md](z13-fan-curve-gz302ea.md).
+
 ## Debugging
 
 | Tag | Producer | Contains |
