@@ -22,6 +22,10 @@ deckshift_plugin_current() {
         "$HOME/.config/omarchy/plugins/nosignal.deckshift/manifest.json"
 }
 
+deckshift_repo_version() {
+    sed -n 's/^DECKSHIFT_VERSION="\(.*\)"$/\1/p' "$DECKSHIFT_SCRIPT" | head -1
+}
+
 phase6_check() {
     deckshift_ready \
         && is_pkg_installed gamescope \
@@ -100,10 +104,13 @@ phase6_run() {
     # DeckShift marker. Treat that as "needs the installer", not "already done".
     if is_pkg_installed gamescope \
         && [[ -f /usr/share/wayland-sessions/gamescope-session-steam-nm.desktop ]] \
-        && deckshift_applied; then
+        && deckshift_applied \
+        && deckshift_plugin_current; then
         success "Gamescope already installed (DeckShift)."
     elif [[ $DRY_RUN -eq 1 ]]; then
-        if is_pkg_installed gamescope; then
+        if deckshift_applied; then
+            info "Would prompt to update DeckShift to $(deckshift_repo_version)"
+        elif is_pkg_installed gamescope; then
             info "Would prompt to migrate Gaming Mode to DeckShift"
         else
             info "Would prompt to install Gamescope (Steam Gaming Mode) via DeckShift"
@@ -114,7 +121,13 @@ phase6_run() {
             warn "Run: git submodule update --init --recursive"
         else
             local gs_prompt="Install Gamescope (Steam Gaming Mode)?"
-            if is_pkg_installed gamescope; then
+            if deckshift_applied; then
+                # Installed, but older than the submodule: re-running the
+                # installer is how DeckShift updates (it rewrites the sudoers
+                # rules, scripts and control panel in place).
+                info "Installed DeckShift is older than the repo's ($(deckshift_repo_version))."
+                gs_prompt="Update DeckShift to $(deckshift_repo_version)?"
+            elif is_pkg_installed gamescope; then
                 warn "Gaming Mode was set up by the retired Super_shift_S_release.sh +"
                 warn "hotfix stack. DeckShift replaces it (Lua keybind, portal recovery,"
                 warn "consolidated pacman hook, power-profile restore)."
