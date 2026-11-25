@@ -34,8 +34,11 @@ phase3_check() {
         && [[ ! -f ~/.local/bin/z13-wifi-powersave-auto ]] \
         && [[ ! -f ~/.config/omarchy/hooks/post-update.d/z13-power-profile-debounce-hook.sh ]] \
         && [[ -x ~/.local/bin/omarchy-powerprofiles-set ]] \
+        && cmp -s "$SCRIPT_DIR/templates/omarchy-powerprofiles-set-debounced" ~/.local/bin/omarchy-powerprofiles-set \
         && [[ -x ~/.local/bin/z13-power-health ]] \
-        && [[ -f ~/.config/systemd/user/z13-power-health.timer ]] \
+        && cmp -s "$SCRIPT_DIR/scripts/z13-power-health.sh" ~/.local/bin/z13-power-health \
+        && cmp -s "$SCRIPT_DIR/templates/systemd/user/z13-power-health.service" ~/.config/systemd/user/z13-power-health.service \
+        && cmp -s "$SCRIPT_DIR/templates/systemd/user/z13-power-health.timer" ~/.config/systemd/user/z13-power-health.timer \
         && [[ ! -d ~/.config/omarchy/plugins/z13.battery ]] \
         && [[ ! -d ~/.config/omarchy/plugins/z13.lock ]]
 }

@@ -258,22 +258,18 @@ without a blip (silent), burst with a blip (warns under `burst`), `--fix`.
 
 ## 11. Branch and merge snapshot
 
-As of 2026-11-06:
+**Merged into `main` on 2026-11-25:** `fix-z13-profile-sentinel` (`d313adc`),
+`z13-power-observability` (hardening `1847eb8`, burst guard `688a61c`, docs)
+and `z13-fan-curves` (Phase 2b, `5285203`). Nothing is pushed.
 
-| Ref | State |
-|---|---|
-| `main` (`bdb6432`) | 3 commits ahead of `origin/main`, not pushed |
-| `fix-z13-profile-sentinel` (`d313adc`) | sentinel `exec` fix; unmerged |
-| `z13-power-observability` | `d313adc` + hardening (`1847eb8`) + burst guard (`688a61c`) + docs; unmerged, deployed live |
-
-Worktree: `~/worktrees/omarchy-rog-z13-setup/z13-power-observability`.
-
-Merge order when asked (never push or commit to `main` unprompted):
-
-```bash
-wt -C ~/code/omarchy-rog-z13-setup merge fix-z13-profile-sentinel
-wt -C ~/code/omarchy-rog-z13-setup merge z13-power-observability
-```
+**Why it mattered:** until then these lived only on unmerged branches while
+being deployed live. On 2026-11-25 an `./install.sh` run from `main`
+reinstalled `main`'s old wrapper (two-read window, no burst guard, the `exec`
+sentinel leak) over the hardened one. The next 1 s `AC0` blip (11:17:05)
+applied `power-saver` on AC, and `z13-power-health` flagged `div=mismatch` and
+a leaked sentinel. `phase3_check` now compares the deployed wrapper, health
+script and units against the repo (`cmp -s`), so a drifted or older copy makes
+Phase 3 run again instead of being treated as done.
 
 ## 12. See also
 
