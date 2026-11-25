@@ -64,6 +64,16 @@ trap cleanup EXIT
 
 log() { logger -t z13-powerprofiles "$*" 2>/dev/null || true; }
 
+# Run the original script to completion instead of exec'ing into it. `exec`
+# replaces this shell, so the EXIT trap never runs and $PROCESSING is left
+# behind; every call in the next 30 s then hits the "not stale yet" branch and
+# exits silently. That is how a one-second EC flap on 2026-11-05 left the
+# machine on power-saver (platform_profile quiet) after the ac restore was
+# dropped. A plain invocation keeps the sentinel until this script exits.
+run_orig() {
+    "$ORIG_SCRIPT" "$@"
+}
+
 # ---------------------------------------------------------------------------
 # Resolve the real power source from BAT0.status.
 # ---------------------------------------------------------------------------
@@ -154,7 +164,8 @@ settle_action() {
 
 if (( $# > 2 )); then
     # Let the real script print its usage error.
-    exec "$ORIG_SCRIPT" "$@"
+    run_orig "$@"
+    exit
 fi
 
 action_arg="${1:-autodetect}"
@@ -179,7 +190,8 @@ fi
 
 if [[ -n $profile_arg ]]; then
     log "applying explicit profile '$profile_arg' for $action"
-    exec "$ORIG_SCRIPT" "$action" "$profile_arg"
+    run_orig "$action" "$profile_arg"
+    exit
 fi
 
 # Idempotency: skip when the profile for this action is already active. This
@@ -204,4 +216,4 @@ if [[ -n $current && $current == "$target" ]]; then
 fi
 
 log "settled on $action; applying $( [[ -n $target ]] && echo "$target" || echo "state-file profile" )"
-exec "$ORIG_SCRIPT" "$action"
+run_orig "$action"
