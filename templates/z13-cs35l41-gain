@@ -1,0 +1,31 @@
+#!/bin/bash
+# Point the Z13's CS35L41 speaker amplifier configs at the 19.5 dB gain table.
+#
+# linux-firmware-cirrus owns these two symlinks and resets them to its default
+# (15.5 dB) on every update; seen 2026-10-23. Run by the pacman hook
+# /etc/pacman.d/hooks/z13-cs35l41-gain.hook after each install/upgrade of that
+# package, and by Phase 9 of omarchy-rog-z13-setup. The amplifier loads the
+# config at boot, so a change takes effect after a reboot. Never fails the
+# pacman transaction.
+
+FIRMWARE_DIR="/usr/lib/firmware/cirrus"
+TARGET="cs35l41/bincfgs/cs35l41-dsp1-19_5dB.bincfg.zst"
+LINKS=(cs35l41-dsp1-spk-prot-10431fb3-l0.bincfg.zst cs35l41-dsp1-spk-prot-10431fb3-r0.bincfg.zst)
+
+if [[ ! -f "$FIRMWARE_DIR/$TARGET" ]]; then
+    echo "z13-cs35l41-gain: $FIRMWARE_DIR/$TARGET not found; speaker gain left at the package default" >&2
+    exit 0
+fi
+
+changed=0
+for link in "${LINKS[@]}"; do
+    if [[ "$(readlink "$FIRMWARE_DIR/$link" 2>/dev/null)" != "$TARGET" ]]; then
+        ln -sfn "$TARGET" "$FIRMWARE_DIR/$link" && changed=1
+    fi
+done
+
+if (( changed )); then
+    echo "z13-cs35l41-gain: speaker amplifier gain set back to 19.5 dB (takes effect after a reboot)"
+    logger -t z13-cs35l41-gain "restored 19.5 dB amplifier gain links" 2>/dev/null || true
+fi
+exit 0
