@@ -6,9 +6,9 @@
 # memory". z13-llm-unload.service runs before the hibernate and unloads them.
 #
 # Not a system-sleep hook: those run after user.slice is frozen, and
-# llama-swap runs as a user service. suspend-then-hibernate is not covered
-# (its hibernate step does not pass through hibernate.target); this machine
-# only hibernates on request.
+# llama-swap runs as a user service. suspend-then-hibernate (lid close, Phase
+# 26) is covered through suspend-then-hibernate.target, so models are unloaded
+# when the lid closes: its hibernate step never passes through hibernate.target.
 
 LLM_UNLOAD_SCRIPT_SRC="$SCRIPT_DIR/templates/z13-llm-unload"
 LLM_UNLOAD_SCRIPT_DEST="/usr/local/bin/z13-llm-unload"
@@ -35,7 +35,7 @@ phase24_run() {
     run_sudo install -Dm644 "$LLM_UNLOAD_UNIT_SRC" "$LLM_UNLOAD_UNIT_DEST"
     run_sudo systemctl daemon-reload
     run_sudo systemctl enable z13-llm-unload.service
-    success "z13-llm-unload.service enabled for hibernate and hybrid-sleep"
+    success "z13-llm-unload.service enabled for hibernate, hybrid-sleep and suspend-then-hibernate"
 
     info "Endpoints default to llama-swap http://127.0.0.1:8000 and Ollama http://127.0.0.1:11434;"
     info "  override with LLAMA_SWAP_URL= / OLLAMA_URL= in /etc/default/z13-llm-unload."
